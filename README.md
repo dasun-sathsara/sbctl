@@ -20,7 +20,7 @@ This will:
 - build and install `/usr/local/bin/sbctl`
 - create `/usr/local/etc/sing-box/profiles`
 - install the LaunchDaemon plist at `/Library/LaunchDaemons/app.lexiflix.singbox.plist`
-- write the seed profile to `/usr/local/etc/sing-box/profiles/sg-zoom-cloudflare.json`
+- write the seed profile to `/usr/local/etc/sing-box/profiles/sg-cloudflare.json`
 - point `/usr/local/etc/sing-box/config.json` at the seed profile
 - install `/etc/sudoers.d/sbctl` after validating it with `visudo -cf`
 
@@ -29,15 +29,15 @@ This will:
 ```bash
 sbctl
 sbctl list
-sbctl use sg-zoom-cloudflare
+sbctl use sg-cloudflare
 sbctl off
 sbctl status
 sbctl logs
-sbctl edit sg-zoom-cloudflare
+sbctl edit sg-cloudflare
 sbctl add work-vpn
 sbctl rm work-vpn
 sbctl check
-sbctl check sg-zoom-cloudflare
+sbctl check sg-cloudflare
 sbctl version
 ```
 

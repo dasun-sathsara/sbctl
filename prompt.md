@@ -10,16 +10,16 @@ Repo root: `~/code/sbctl`. The previous build is installed at `/usr/local/bin/sb
 
 ### 1. CRITICAL: Corrupted `server_name` in `scripts/install.sh`
 
-The heredoc-embedded seed profile has `"server_name": "[www.zoom.us](http://www.zoom.us)"` which is invalid. Change to `"server_name": "www.zoom.us"`. After fixing, if `/usr/local/etc/sing-box/profiles/zoom-reality.json` on the system contains the same corrupted string, rewrite it with the corrected content (back up the current file to `<path>.bak` before overwriting, and only if the corrupted string is present — do not touch it if the user has already fixed it).
+The heredoc-embedded seed profile has `"server_name": "[www.zoom.us](http://www.zoom.us)"` which is invalid. Change to `"server_name": "www.zoom.us"`.
 
 ### 2. Make `scripts/install.sh` idempotent and non-destructive
 
-- Only write `zoom-reality.json` if it does **not** already exist:
+- Only write `sg-cloudflare.json` if it does **not** already exist:
 
 ```bash
-if [[ ! -f "$profiles_dir/zoom-reality.json" ]]; then
+if [[ ! -f "$profiles_dir/sg-cloudflare.json" ]]; then
 
-cat > "$profiles_dir/zoom-reality.json" <<'JSON'
+cat > "$profiles_dir/sg-cloudflare.json" <<'JSON'
 
 ...
 
@@ -98,11 +98,11 @@ Add comments (not interactivity) explaining that `/usr/local/etc/sing-box/profil
 ## After the fixes
 
 1. `cd ~/code/sbctl && make fmt && make vet && make build` — all clean.
-2. `make install` — runs idempotently, does not clobber the existing `zoom-reality.json` (verify by checking file hash before/after).
-3. `sbctl check zoom-reality` — passes.
-4. `sbctl use zoom-reality` — prints `✓ switched to zoom-reality`; `sudo launchctl print system/app.lexiflix.singbox` shows `state = running`; `ifconfig utun123` exists.
+2. `make install` — runs idempotently, does not clobber the existing `sg-cloudflare.json` (verify by checking file hash before/after).
+3. `sbctl check sg-cloudflare` — passes.
+4. `sbctl use sg-cloudflare` — prints `✓ switched to sg-cloudflare`; `sudo launchctl print system/app.lexiflix.singbox` shows `state = running`; `ifconfig utun123` exists.
 5. `curl -s https://api.ipify.org` returns the server's public IP (not the LAN IP).
-6. `sbctl edit zoom-reality` — induce a JSON error (e.g., add a trailing comma), see the 3-way prompt; test Re-edit, fix the error, see success.
+6. `sbctl edit sg-cloudflare` — induce a JSON error (e.g., add a trailing comma), see the 3-way prompt; test Re-edit, fix the error, see success.
 7. `sbctl off` — stops cleanly; `ifconfig utun123` gone.
 8. `git status` — no untracked `*.json` profile files surfaced (gitignore working).
 
@@ -118,7 +118,7 @@ Final markdown summary with:
 
 ## Guardrails
 
-- Never overwrite a user-created profile JSON in `/usr/local/etc/sing-box/profiles/` except the specific case of the corrupted `zoom-reality.json` (back it up to `.bak` first).
+- Never overwrite a user-created profile JSON in `/usr/local/etc/sing-box/profiles/`.
 - Never edit `/etc/sudoers`; only `/etc/sudoers.d/sbctl` via the temp-file + `visudo -cf` pattern.
 - Do not leave the machine in a broken network state. If any step fails mid-way, run `sbctl off` before aborting.
 - Preserve all commit history; make fixes in new commits with clear messages, not a rewrite.
