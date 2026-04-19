@@ -119,14 +119,23 @@ if [[ -z "$singbox_bin" ]]; then
 fi
 
 mkdir -p "$profiles_dir" "$(dirname "$active_link")" "$log_dir"
+chown "$user_name":wheel "$profiles_dir"
+chmod 755 "$profiles_dir"
 chown root:wheel "$log_dir"
 chmod 755 "$log_dir"
 
 write_seed_profile
 
 if [[ ! -f "$default_profile_path" ]]; then
-  install -o root -g wheel -m 644 "$tmp_profile" "$default_profile_path"
+  install -o "$user_name" -g wheel -m 644 "$tmp_profile" "$default_profile_path"
 fi
+
+for profile_path in "$profiles_dir"/*.json; do
+  [[ -e "$profile_path" ]] || continue
+  if [[ "$(stat -f '%Su' "$profile_path")" == "root" ]]; then
+    chown "$user_name":wheel "$profile_path"
+  fi
+done
 
 if [[ ! -e "$active_link" ]]; then
   ln -sfn "$default_profile_path" "$active_link"
