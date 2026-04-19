@@ -20,7 +20,7 @@ This will:
 - build and install `/usr/local/bin/sbctl`
 - create `/usr/local/etc/sing-box/profiles`
 - install the LaunchDaemon plist at `/Library/LaunchDaemons/app.lexiflix.singbox.plist`
-- write the seed profile to `/usr/local/etc/sing-box/profiles/zoom-reality.json`
+- write the seed profile to `/usr/local/etc/sing-box/profiles/sg-zoom-cloudflare.json`
 - point `/usr/local/etc/sing-box/config.json` at the seed profile
 - install `/etc/sudoers.d/sbctl` after validating it with `visudo -cf`
 
@@ -29,15 +29,15 @@ This will:
 ```bash
 sbctl
 sbctl list
-sbctl use zoom-reality
+sbctl use sg-zoom-cloudflare
 sbctl off
 sbctl status
 sbctl logs
-sbctl edit zoom-reality
+sbctl edit sg-zoom-cloudflare
 sbctl add work-vpn
 sbctl rm work-vpn
 sbctl check
-sbctl check zoom-reality
+sbctl check sg-zoom-cloudflare
 sbctl version
 ```
 
@@ -49,7 +49,7 @@ sbctl version
 - `sbctl off` stops the daemon and posts a macOS notification.
 - `sbctl status` prints a bordered panel with run state, active profile, and configured TUN name.
 - `sbctl logs` tails `/var/log/sing-box/error.log` until Ctrl-C, then exits `0`.
-- `sbctl edit <name>` opens the profile in `$EDITOR` or `nano`, validates with `sing-box check -c`, and lets you re-edit, revert, or keep a broken file on failure.
+- `sbctl edit <name>` opens the profile in `$EDITOR` or `nvim`, validates with `sing-box check -c`, and lets you re-edit, revert, or keep a broken file on failure.
 - `sbctl add <name>` copies `assets/skeleton.json`, opens it in your editor, and validates it.
 - `sbctl rm <name>` deletes a profile after confirmation, refusing the active one unless `--force`.
 - `sbctl check [name]` validates a named profile or the active one, and reports a broken active symlink clearly.

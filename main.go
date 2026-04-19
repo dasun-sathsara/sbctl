@@ -410,7 +410,7 @@ func printStatus() error {
 func openEditor(path string) error {
 	editor := os.Getenv("EDITOR")
 	if strings.TrimSpace(editor) == "" {
-		editor = "nano"
+		editor = "nvim"
 	}
 	parts := strings.Fields(editor)
 	cmd := exec.Command(parts[0], append(parts[1:], path)...)

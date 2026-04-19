@@ -6,6 +6,9 @@ active_link="/usr/local/etc/sing-box/config.json"
 plist_path="/Library/LaunchDaemons/app.lexiflix.singbox.plist"
 log_dir="/var/log/sing-box"
 sudoers_path="/etc/sudoers.d/sbctl"
+default_profile_name="sg-zoom-cloudflare"
+default_profile_path="$profiles_dir/$default_profile_name.json"
+legacy_profile_path="$profiles_dir/zoom-reality.json"
 tmp_sudoers="$(mktemp)"
 tmp_plist="$(mktemp)"
 tmp_profile="$(mktemp)"
@@ -105,8 +108,8 @@ chmod 755 "$log_dir"
 
 write_seed_profile
 
-if [[ ! -f "$profiles_dir/zoom-reality.json" ]]; then
-  cat > "$profiles_dir/zoom-reality.json" <<'JSON'
+if [[ ! -f "$default_profile_path" ]]; then
+  cat > "$default_profile_path" <<'JSON'
 {
   "log": {
     "level": "info",
@@ -181,13 +184,13 @@ if [[ ! -f "$profiles_dir/zoom-reality.json" ]]; then
 JSON
 fi
 
-if [[ -f "$profiles_dir/zoom-reality.json" ]] && rg -Fq "$corrupted_server_name" "$profiles_dir/zoom-reality.json"; then
-  cp -p "$profiles_dir/zoom-reality.json" "$profiles_dir/zoom-reality.json.bak"
-  install -o root -g wheel -m 644 "$tmp_profile" "$profiles_dir/zoom-reality.json"
+if [[ -f "$legacy_profile_path" ]] && rg -Fq "$corrupted_server_name" "$legacy_profile_path"; then
+  cp -p "$legacy_profile_path" "$legacy_profile_path.bak"
+  install -o root -g wheel -m 644 "$tmp_profile" "$legacy_profile_path"
 fi
 
 if [[ ! -e "$active_link" ]]; then
-  ln -sfn "$profiles_dir/zoom-reality.json" "$active_link"
+  ln -sfn "$default_profile_path" "$active_link"
 fi
 
 cat > "$tmp_sudoers" <<EOF
@@ -242,6 +245,6 @@ if launchctl print system/app.lexiflix.singbox >/dev/null 2>&1; then
 fi
 launchctl bootstrap system "$plist_path"
 
-sing-box check -c "$profiles_dir/zoom-reality.json"
+sing-box check -c "$default_profile_path"
 
 echo "installed sbctl system files"
