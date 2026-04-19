@@ -180,9 +180,13 @@ if ! plutil -lint "$plist_path"; then
 fi
 
 if launchctl print system/app.lexiflix.singbox >/dev/null 2>&1; then
-  launchctl bootout system/app.lexiflix.singbox || true
+  if ! launchctl kickstart -k system/app.lexiflix.singbox; then
+    launchctl bootout system/app.lexiflix.singbox || true
+    launchctl bootstrap system "$plist_path"
+  fi
+else
+  launchctl bootstrap system "$plist_path"
 fi
-launchctl bootstrap system "$plist_path"
 
 sing-box check -c "$default_profile_path"
 
