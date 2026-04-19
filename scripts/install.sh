@@ -8,13 +8,11 @@ log_dir="/var/log/sing-box"
 sudoers_path="/etc/sudoers.d/sbctl"
 default_profile_name="sg-zoom-cloudflare"
 default_profile_path="$profiles_dir/$default_profile_name.json"
-legacy_profile_path="$profiles_dir/zoom-reality.json"
 tmp_sudoers="$(mktemp)"
 tmp_plist="$(mktemp)"
 tmp_profile="$(mktemp)"
 user_name="${SUDO_USER:-$(logname 2>/dev/null || whoami)}"
 singbox_bin="$(command -v sing-box)"
-corrupted_server_name='[www.zoom.us](http://www.zoom.us)'
 
 cleanup() {
   rm -f "$tmp_sudoers" "$tmp_plist" "$tmp_profile"
@@ -109,84 +107,7 @@ chmod 755 "$log_dir"
 write_seed_profile
 
 if [[ ! -f "$default_profile_path" ]]; then
-  cat > "$default_profile_path" <<'JSON'
-{
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "dns": {
-    "servers": [
-      {
-        "tag": "cloudflare-doh",
-        "address": "https://1.1.1.1/dns-query",
-        "address_resolver": "local-dns",
-        "detour": "proxy"
-      },
-      {
-        "tag": "local-dns",
-        "address": "local",
-        "detour": "direct"
-      }
-    ],
-    "rules": [
-      { "server": "cloudflare-doh" }
-    ],
-    "strategy": "ipv4_only"
-  },
-  "inbounds": [
-    {
-      "type": "tun",
-      "tag": "tun-in",
-      "interface_name": "utun123",
-      "address": ["172.19.0.1/30"],
-      "auto_route": true,
-      "strict_route": true,
-      "stack": "gvisor",
-      "sniff": true,
-      "mtu": 1350,
-      "sniff_override_destination": true
-    }
-  ],
-
-  "outbounds": [
-    {
-      "type": "vless",
-      "tag": "proxy",
-      "server": "54.255.210.30",
-      "server_port": 443,
-      "uuid": "7beb776c-c98f-47f3-a0c5-c2b29b5bba90",
-      "flow": "xtls-rprx-vision",
-      "tls": {
-        "enabled": true,
-        "server_name": "www.zoom.us",
-        "utls": { "enabled": true, "fingerprint": "chrome" },
-        "reality": {
-          "enabled": true,
-          "public_key": "-uo9S2j_h136hqPobdaURNaSlxylWAGF5fEzHIUMNkA",
-          "short_id": "818f5c1f"
-        }
-      }
-    },
-
-    { "type": "direct", "tag": "direct" }
-  ],
-
-  "route": {
-    "rules": [
-      { "action": "hijack-dns", "protocol": "dns" },
-      { "ip_is_private": true, "outbound": "direct" },
-      { "outbound": "proxy" }
-    ],
-    "auto_detect_interface": true
-  }
-}
-JSON
-fi
-
-if [[ -f "$legacy_profile_path" ]] && rg -Fq "$corrupted_server_name" "$legacy_profile_path"; then
-  cp -p "$legacy_profile_path" "$legacy_profile_path.bak"
-  install -o root -g wheel -m 644 "$tmp_profile" "$legacy_profile_path"
+  install -o root -g wheel -m 644 "$tmp_profile" "$default_profile_path"
 fi
 
 if [[ ! -e "$active_link" ]]; then
