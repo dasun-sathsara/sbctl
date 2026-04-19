@@ -21,77 +21,95 @@ trap cleanup EXIT
 
 write_seed_profile() {
   cat > "$tmp_profile" <<'JSON'
-{
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "dns": {
-    "servers": [
+  {
+    "log": {
+      "level": "info",
+      "timestamp": true
+    },
+    "dns": {
+      "servers": [
+        {
+          "type": "https",
+          "tag": "cloudflare-doh",
+          "server": "1.1.1.1",
+          "domain_resolver": "local-dns",
+          "detour": "proxy"
+        },
+        {
+          "type": "local",
+          "tag": "local-dns",
+          "detour": "direct"
+        }
+      ],
+      "strategy": "ipv4_only",
+      "final": "cloudflare-doh"
+    },
+    "inbounds": [
       {
-        "tag": "cloudflare-doh",
-        "address": "https://1.1.1.1/dns-query",
-        "address_resolver": "local-dns",
-        "detour": "proxy"
+        "type": "tun",
+        "tag": "tun-in",
+        "interface_name": "utun123",
+        "address": [
+          "172.19.0.1/30"
+        ],
+        "auto_route": true,
+        "strict_route": true,
+        "stack": "gvisor",
+        "mtu": 1350
+      }
+    ],
+    "outbounds": [
+      {
+        "type": "vless",
+        "tag": "proxy",
+        "server": "54.255.210.30",
+        "server_port": 443,
+        "uuid": "7beb776c-c98f-47f3-a0c5-c2b29b5bba90",
+        "flow": "xtls-rprx-vision",
+        "tls": {
+          "enabled": true,
+          "server_name": "www.zoom.us",
+          "utls": {
+            "enabled": true,
+            "fingerprint": "chrome"
+          },
+          "reality": {
+            "enabled": true,
+            "public_key": "-uo9S2j_h136hqPobdaURNaSlxylWAGF5fEzHIUMNkA",
+            "short_id": "818f5c1f"
+          }
+        }
       },
       {
-        "tag": "local-dns",
-        "address": "local",
-        "detour": "direct"
+        "type": "direct",
+        "tag": "direct"
       }
     ],
-    "rules": [
-      { "server": "cloudflare-doh" }
-    ],
-    "strategy": "ipv4_only"
-  },
-  "inbounds": [
-    {
-      "type": "tun",
-      "tag": "tun-in",
-      "interface_name": "utun123",
-      "address": ["172.19.0.1/30"],
-      "auto_route": true,
-      "strict_route": true,
-      "stack": "gvisor",
-      "sniff": true,
-      "mtu": 1350,
-      "sniff_override_destination": true
-    }
-  ],
-
-  "outbounds": [
-    {
-      "type": "vless",
-      "tag": "proxy",
-      "server": "54.255.210.30",
-      "server_port": 443,
-      "uuid": "7beb776c-c98f-47f3-a0c5-c2b29b5bba90",
-      "flow": "xtls-rprx-vision",
-      "tls": {
-        "enabled": true,
-        "server_name": "www.zoom.us",
-        "utls": { "enabled": true, "fingerprint": "chrome" },
-        "reality": {
-          "enabled": true,
-          "public_key": "-uo9S2j_h136hqPobdaURNaSlxylWAGF5fEzHIUMNkA",
-          "short_id": "818f5c1f"
+    "route": {
+      "auto_detect_interface": true,
+      "default_domain_resolver": {
+        "server": "local-dns",
+        "strategy": "ipv4_only"
+      },
+      "rules": [
+        {
+          "protocol": "dns",
+          "action": "hijack-dns"
+        },
+        {
+          "inbound": "tun-in",
+          "action": "sniff"
+        },
+        {
+          "ip_is_private": true,
+          "outbound": "direct"
+        },
+        {
+          "outbound": "proxy"
         }
-      }
-    },
-
-    { "type": "direct", "tag": "direct" }
-  ],
-
-  "route": {
-    "rules": [
-      { "action": "hijack-dns", "protocol": "dns" },
-      { "ip_is_private": true, "outbound": "direct" },
-      { "outbound": "proxy" }
-    ],
-    "auto_detect_interface": true
+      ]
+    }
   }
-}
 JSON
 }
 

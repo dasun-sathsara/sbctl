@@ -122,7 +122,7 @@ func newOffCmd() *cobra.Command {
 			if err := daemon.Stop(daemonLabel); err != nil {
 				return err
 			}
-			fmt.Println("● sing-box stopped")
+			fmt.Println("✓ sing-box stopped")
 			notify("sing-box stopped")
 			return nil
 		},
@@ -328,19 +328,29 @@ func newVersionCmd() *cobra.Command {
 }
 
 func runInteractive() error {
-	if err := printStatus(); err != nil {
+	state, err := daemon.Status(daemonLabel)
+	if err != nil {
+		fmt.Println(ui.RenderStatus(daemon.StateError, "", ""))
 		return err
 	}
+	activeName, _ := profile.ActiveName(activeLink)
+	tunName := ""
+	if activeName != "" {
+		tunName, _ = profile.InterfaceName(profile.PathFor(profilesDir, activeName))
+	}
 
-	profiles, active, err := profile.List(profilesDir, activeLink)
+	profiles, _, err := profile.List(profilesDir, activeLink)
 	if err != nil {
 		return err
 	}
+
 	if len(profiles) == 0 {
-		fmt.Printf("No profiles found in %s.\nCreate one with:  sbctl add <name>\n", profilesDir)
+		fmt.Println(ui.RenderStatus(state, activeName, tunName))
+		fmt.Printf("\nNo profiles found in %s.\nCreate one with:  sbctl add <name>\n", profilesDir)
 		return nil
 	}
-	choice, err := ui.PickProfile(profiles, active)
+
+	choice, err := ui.PickProfile(profiles, activeName, state, tunName)
 	if err != nil {
 		if errors.Is(err, ui.ErrCancelled) {
 			return nil
@@ -352,6 +362,10 @@ func runInteractive() error {
 	}
 	if choice == ui.TurnOffChoice {
 		return newOffCmd().RunE(&cobra.Command{}, nil)
+	}
+	if choice == activeName && state == daemon.StateRunning {
+		fmt.Printf("✓ %s already active\n", choice)
+		return nil
 	}
 	return useProfile(choice)
 }
