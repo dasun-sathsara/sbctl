@@ -173,12 +173,12 @@ func newEditCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := profile.PathFor(profilesDir, args[0])
 			if _, err := os.Stat(path); err != nil {
-				return err
+				return wrapProfileStoreError(err, "access")
 			}
 
 			before, err := os.ReadFile(path)
 			if err != nil {
-				return err
+				return wrapProfileStoreError(err, "read")
 			}
 
 			for {
@@ -200,7 +200,7 @@ func newEditCmd() *cobra.Command {
 						continue
 					case ui.EditChoiceRevert:
 						if writeErr := os.WriteFile(path, before, 0o644); writeErr != nil {
-							return writeErr
+							return wrapProfileStoreError(writeErr, "restore")
 						}
 						fmt.Println("reverted changes")
 					case ui.EditChoiceKeepBroken:
@@ -221,14 +221,22 @@ func newAddCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := os.MkdirAll(profilesDir, 0o755); err != nil {
-				return err
+				return wrapProfileStoreError(err, "prepare")
 			}
 			path := profile.PathFor(profilesDir, args[0])
-			if _, err := os.Stat(path); err == nil {
-				return fmt.Errorf("profile %s already exists", args[0])
+			file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+			if err != nil {
+				if errors.Is(err, os.ErrExist) {
+					return fmt.Errorf("profile %s already exists", args[0])
+				}
+				return wrapProfileStoreError(err, "create")
 			}
-			if err := os.WriteFile(path, []byte(skeleton), 0o644); err != nil {
-				return err
+			if _, err := file.WriteString(skeleton); err != nil {
+				_ = file.Close()
+				return wrapProfileStoreError(err, "write")
+			}
+			if err := file.Close(); err != nil {
+				return wrapProfileStoreError(err, "finalize")
 			}
 			if err := openEditor(path); err != nil {
 				return err
@@ -266,7 +274,7 @@ func newRmCmd() *cobra.Command {
 				return nil
 			}
 			if err := os.Remove(profile.PathFor(profilesDir, name)); err != nil {
-				return err
+				return wrapProfileStoreError(err, "remove")
 			}
 			fmt.Printf("✓ removed %s\n", name)
 			return nil
@@ -460,4 +468,17 @@ func sudo(args ...string) error {
 		return err
 	}
 	return nil
+}
+
+func wrapProfileStoreError(err error, action string) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return cliError{
+			code: 1,
+			msg:  fmt.Sprintf("failed to %s profile data: %v\nRun `make install` to repair ownership under %s.", action, err, profilesDir),
+		}
+	}
+	return err
 }
