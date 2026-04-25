@@ -6,22 +6,18 @@
   "dns": {
     "servers": [
       {
+        "type": "https",
         "tag": "cloudflare-doh",
-        "address": "https://1.1.1.1/dns-query",
-        "address_resolver": "local-dns",
+        "server": "1.1.1.1",
+        "path": "/dns-query",
         "detour": "proxy"
       },
       {
-        "tag": "local-dns",
-        "address": "local",
-        "detour": "direct"
+        "type": "local",
+        "tag": "local-dns"
       }
     ],
-    "rules": [
-      {
-        "server": "cloudflare-doh"
-      }
-    ],
+    "final": "cloudflare-doh",
     "strategy": "ipv4_only"
   },
   "inbounds": [
