@@ -5,7 +5,7 @@
 ## Features
 
 - Interactive default TUI picker built with `huh`
-- Plain CLI flows for `list`, `use`, `off`, `status`, `logs`, `edit`, `add`, `rm`, `check`, and `version`
+- Plain CLI flows for `list`, `use`, `off`, `status`, `logs`, `edit`, `add`, `rm`, `check`, `ip`, and `version`
 - macOS LaunchDaemon support
 - Debian-family Linux systemd support
 - Windows machine-wide WinSW service support
@@ -54,6 +54,7 @@ sbctl add work-vpn
 sbctl rm work-vpn
 sbctl check
 sbctl check sg-cloudflare
+sbctl ip
 sbctl version
 ```
 
@@ -69,6 +70,7 @@ sbctl version
 - `sbctl add <name>` copies `assets/skeleton.json`, opens it in your editor, and validates it.
 - `sbctl rm <name>` deletes a profile after confirmation, refusing the active one unless `--force`.
 - `sbctl check [name]` validates a named profile or the active one and reports broken active config state clearly.
+- `sbctl ip` prints the current public IP, ISP/ASN, and approximate location from `ipinfo.io`.
 
 ## Placeholder Profile
 

@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -75,6 +80,7 @@ func newRootCmd(rt platform.Runtime) *cobra.Command {
 		newAddCmd(rt),
 		newRmCmd(rt),
 		newCheckCmd(rt),
+		newIPCmd(),
 		newVersionCmd(),
 	)
 
@@ -328,6 +334,78 @@ func newVersionCmd() *cobra.Command {
 			fmt.Println(version)
 		},
 	}
+}
+
+func newIPCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ip",
+		Short: "Show current public IP and network location",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			info, err := fetchIPInfo(cmd.Context())
+			if err != nil {
+				return err
+			}
+			fmt.Print(renderIPInfo(info))
+			return nil
+		},
+	}
+}
+
+type ipInfo struct {
+	IP       string `json:"ip"`
+	City     string `json:"city"`
+	Region   string `json:"region"`
+	Country  string `json:"country"`
+	Location string `json:"loc"`
+	Org      string `json:"org"`
+	Postal   string `json:"postal"`
+	Timezone string `json:"timezone"`
+}
+
+func fetchIPInfo(ctx context.Context) (ipInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://ipinfo.io/json", nil)
+	if err != nil {
+		return ipInfo{}, err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ipInfo{}, fmt.Errorf("failed to fetch ipinfo.io: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return ipInfo{}, fmt.Errorf("ipinfo.io returned %s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return ipInfo{}, err
+	}
+	var info ipInfo
+	if err := json.Unmarshal(body, &info); err != nil {
+		return ipInfo{}, fmt.Errorf("ipinfo.io returned invalid JSON: %w", err)
+	}
+	return info, nil
+}
+
+func renderIPInfo(info ipInfo) string {
+	var b strings.Builder
+	b.WriteString("🌐 Public IP\n")
+	writeInfoLine(&b, "📍", "IP", info.IP)
+	writeInfoLine(&b, "🏙️", "City", info.City)
+	writeInfoLine(&b, "🗺️", "Region", info.Region)
+	writeInfoLine(&b, "🇺🇳", "Country", info.Country)
+	writeInfoLine(&b, "🧭", "Location", info.Location)
+	writeInfoLine(&b, "🏢", "Network", info.Org)
+	writeInfoLine(&b, "✉️", "Postal", info.Postal)
+	writeInfoLine(&b, "⏱️", "Timezone", info.Timezone)
+	return b.String()
+}
+
+func writeInfoLine(b *strings.Builder, icon, label, value string) {
+	if strings.TrimSpace(value) == "" {
+		value = "-"
+	}
+	fmt.Fprintf(b, "%s %-9s %s\n", icon, label+":", value)
 }
 
 func runInteractive(rt platform.Runtime) error {
