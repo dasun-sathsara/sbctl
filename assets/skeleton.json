@@ -9,16 +9,17 @@
         "type": "https",
         "tag": "cloudflare-doh",
         "server": "1.1.1.1",
-        "path": "/dns-query",
+        "domain_resolver": "local-dns",
         "detour": "proxy"
       },
       {
         "type": "local",
-        "tag": "local-dns"
+        "tag": "local-dns",
+        "detour": "direct"
       }
     ],
-    "final": "cloudflare-doh",
-    "strategy": "ipv4_only"
+    "strategy": "ipv4_only",
+    "final": "cloudflare-doh"
   },
   "inbounds": [
     {
@@ -31,9 +32,7 @@
       "auto_route": true,
       "strict_route": true,
       "stack": "gvisor",
-      "sniff": true,
-      "mtu": 1350,
-      "sniff_override_destination": true
+      "mtu": 1350
     }
   ],
   "outbounds": [
@@ -64,10 +63,19 @@
     }
   ],
   "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": {
+      "server": "local-dns",
+      "strategy": "ipv4_only"
+    },
     "rules": [
       {
-        "action": "hijack-dns",
-        "protocol": "dns"
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "inbound": "tun-in",
+        "action": "sniff"
       },
       {
         "ip_is_private": true,
@@ -76,7 +84,6 @@
       {
         "outbound": "proxy"
       }
-    ],
-    "auto_detect_interface": true
+    ]
   }
 }
