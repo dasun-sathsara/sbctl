@@ -27,7 +27,7 @@ The installer builds `/usr/local/bin/sbctl`, verifies or installs sing-box with 
 make install
 ```
 
-The installer accepts systems with `ID=debian` or `ID_LIKE` containing `debian`, installs sing-box through the SagerNet APT repository when missing, creates `/etc/sing-box/profiles`, enables the `sing-box` systemd service, and writes `/etc/sudoers.d/sbctl` after validation. It does not start sing-box while placeholders remain.
+The installer accepts systems with `ID=debian` or `ID_LIKE` containing `debian`, installs or upgrades sing-box to at least `1.13.8`, creates `/etc/sing-box/profiles`, enables the `sing-box` systemd service, and writes `/etc/sudoers.d/sbctl` after validation. It tries the SagerNet APT repository first, then falls back to the upstream GitHub `.deb` for the detected architecture if APT serves an older build. It does not start sing-box while placeholders remain.
 
 ### Windows
 
