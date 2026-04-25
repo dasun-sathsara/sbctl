@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 type Profile struct {
@@ -36,11 +37,22 @@ type SymlinkActivator struct {
 }
 
 func (a SymlinkActivator) ActiveName() (string, error) {
-	return ActiveName(a.ActiveConfigPath)
+	path, err := a.ActivePath()
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", nil
+	}
+	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)), nil
 }
 
 func (a SymlinkActivator) ActivePath() (string, error) {
-	return ActivePath(a.ActiveConfigPath)
+	path, err := ActivePath(a.ActiveConfigPath)
+	if errors.Is(err, ErrActiveConfigNotManaged) {
+		return "", nil
+	}
+	return path, err
 }
 
 func (a SymlinkActivator) Activate(target string) (Rollback, error) {
@@ -138,6 +150,9 @@ func List(profilesDir, activeLink string) ([]Profile, string, error) {
 func ActivePath(activeLink string) (string, error) {
 	target, err := os.Readlink(activeLink)
 	if err != nil {
+		if errors.Is(err, syscall.EINVAL) {
+			return "", ErrActiveConfigNotManaged
+		}
 		return "", err
 	}
 	if filepath.IsAbs(target) {
@@ -145,6 +160,8 @@ func ActivePath(activeLink string) (string, error) {
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(activeLink), target)), nil
 }
+
+var ErrActiveConfigNotManaged = errors.New("active config is not managed by sbctl")
 
 func ActiveName(activeLink string) (string, error) {
 	path, err := ActivePath(activeLink)

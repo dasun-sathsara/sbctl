@@ -280,6 +280,12 @@ func newCheckCmd(rt platform.Runtime) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				if active == "" {
+					return cliError{
+						code: 1,
+						msg:  fmt.Sprintf("no active profile is managed by sbctl; run `sbctl use <name>` to manage %s", rt.ActiveConfigPath),
+					}
+				}
 				if _, err := os.Stat(active); err != nil {
 					if errors.Is(err, os.ErrNotExist) {
 						return cliError{

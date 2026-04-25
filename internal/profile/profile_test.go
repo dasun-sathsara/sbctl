@@ -23,6 +23,29 @@ func TestHasPlaceholders(t *testing.T) {
 	}
 }
 
+func TestSymlinkActivatorTreatsRegularActiveConfigAsUnmanaged(t *testing.T) {
+	active := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(active, []byte(`{"package":"default"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	activator := SymlinkActivator{ActiveConfigPath: active}
+	name, err := activator.ActiveName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "" {
+		t.Fatalf("active name = %q, want empty", name)
+	}
+	path, err := activator.ActivePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "" {
+		t.Fatalf("active path = %q, want empty", path)
+	}
+}
+
 func TestCopyActivatorRollback(t *testing.T) {
 	dir := t.TempDir()
 	oldProfile := filepath.Join(dir, "old.json")

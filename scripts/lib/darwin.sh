@@ -45,9 +45,7 @@ install_darwin() {
     fi
   done
 
-  if [[ ! -e "$active_link" ]]; then
-    ln -sfn "$default_profile_path" "$active_link"
-  fi
+  ensure_managed_symlink "$active_link" "$default_profile_path"
 
   install_sudoers "$user_name ALL=(root) NOPASSWD: /bin/ln, /bin/launchctl" wheel
 

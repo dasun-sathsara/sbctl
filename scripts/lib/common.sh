@@ -22,6 +22,24 @@ has_placeholders() {
   [[ "$data" == *"TODO_SERVER_IP_OR_HOST"* || "$data" == *"TODO_UUID"* || "$data" == *"TODO_SNI_HOSTNAME"* || "$data" == *"TODO_REALITY_PUBLIC_KEY"* || "$data" == *"TODO_SHORT_ID"* ]]
 }
 
+ensure_managed_symlink() {
+  local active_link="$1"
+  local default_profile_path="$2"
+
+  if [[ -L "$active_link" ]]; then
+    return
+  fi
+
+  if [[ -e "$active_link" ]]; then
+    local backup_path
+    backup_path="$active_link.bak.$(date +%Y%m%d%H%M%S)"
+    mv "$active_link" "$backup_path"
+    echo "backed up existing unmanaged config to $backup_path"
+  fi
+
+  ln -sfn "$default_profile_path" "$active_link"
+}
+
 install_sudoers() {
   local content="$1"
   local group_name="$2"
