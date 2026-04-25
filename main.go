@@ -1,34 +1,23 @@
 package main
 
 import (
-	"bytes"
 	_ "embed"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
 	"sbctl/internal/daemon"
+	"sbctl/internal/platform"
 	"sbctl/internal/profile"
 	"sbctl/internal/singbox"
 	"sbctl/internal/ui"
-)
-
-const (
-	profilesDir = "/usr/local/etc/sing-box/profiles"
-	activeLink  = "/usr/local/etc/sing-box/config.json"
-	daemonLabel = "system/app.lexiflix.singbox"
-	plistPath   = "/Library/LaunchDaemons/app.lexiflix.singbox.plist"
-	errorLog    = "/var/log/sing-box/error.log"
-	accessLog   = "/var/log/sing-box/access.log"
 )
 
 var version = "dev"
@@ -50,7 +39,11 @@ func (e cliError) Error() string { return e.msg }
 func (e cliError) ExitCode() int { return e.code }
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
+	rt, err := platform.Detect()
+	if err == nil {
+		err = newRootCmd(rt).Execute()
+	}
+	if err != nil {
 		var coded exitCoder
 		if errors.As(err, &coded) {
 			fmt.Fprintln(os.Stderr, coded.Error())
@@ -61,39 +54,42 @@ func main() {
 	}
 }
 
-func newRootCmd() *cobra.Command {
+func newRootCmd(rt platform.Runtime) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "sbctl",
-		Short:         "Manage sing-box profiles on macOS",
+		Short:         "Manage sing-box profiles",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInteractive()
+			return runInteractive(rt)
 		},
 	}
 
 	root.AddCommand(
-		newListCmd(),
-		newUseCmd(),
-		newOffCmd(),
-		newStatusCmd(),
-		newLogsCmd(),
-		newEditCmd(),
-		newAddCmd(),
-		newRmCmd(),
-		newCheckCmd(),
+		newListCmd(rt),
+		newUseCmd(rt),
+		newOffCmd(rt),
+		newStatusCmd(rt),
+		newLogsCmd(rt),
+		newEditCmd(rt),
+		newAddCmd(rt),
+		newRmCmd(rt),
+		newCheckCmd(rt),
 		newVersionCmd(),
 	)
 
 	return root
 }
 
-func newListCmd() *cobra.Command {
+func newListCmd(rt platform.Runtime) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List profiles",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			profiles, active, err := profile.List(profilesDir, activeLink)
+			profiles, active, err := profile.List(rt.ProfilesDir, rt.ActiveConfigPath)
+			if rt.ActiveNamePath != "" {
+				active, _ = rt.Activator.ActiveName()
+			}
 			if err != nil {
 				return err
 			}
@@ -103,43 +99,43 @@ func newListCmd() *cobra.Command {
 	}
 }
 
-func newUseCmd() *cobra.Command {
+func newUseCmd(rt platform.Runtime) *cobra.Command {
 	return &cobra.Command{
 		Use:   "use <name>",
 		Short: "Activate a profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return useProfile(args[0])
+			return useProfile(rt, args[0])
 		},
 	}
 }
 
-func newOffCmd() *cobra.Command {
+func newOffCmd(rt platform.Runtime) *cobra.Command {
 	return &cobra.Command{
 		Use:   "off",
 		Short: "Stop sing-box",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := daemon.Stop(daemonLabel); err != nil {
+			if err := rt.Manager.Stop(); err != nil {
 				return err
 			}
 			fmt.Println("✓ sing-box stopped")
-			notify("sing-box stopped")
+			rt.Notifier.Notify("sing-box stopped")
 			return nil
 		},
 	}
 }
 
-func newStatusCmd() *cobra.Command {
+func newStatusCmd(rt platform.Runtime) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show sing-box status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return printStatus()
+			return printStatus(rt)
 		},
 	}
 }
 
-func newLogsCmd() *cobra.Command {
+func newLogsCmd(rt platform.Runtime) *cobra.Command {
 	return &cobra.Command{
 		Use:   "logs",
 		Short: "Tail sing-box error logs",
@@ -147,38 +143,25 @@ func newLogsCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			tail := exec.CommandContext(ctx, "tail", "-f", errorLog)
-			tail.Stdout = os.Stdout
-			tail.Stderr = os.Stderr
-			if err := tail.Run(); err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				var exitErr *exec.ExitError
-				if errors.As(err, &exitErr) && exitErr.ExitCode() == -1 {
-					return nil
-				}
-				return err
-			}
-			return nil
+			return rt.LogFollower.Follow(ctx)
 		},
 	}
 }
 
-func newEditCmd() *cobra.Command {
+func newEditCmd(rt platform.Runtime) *cobra.Command {
 	return &cobra.Command{
 		Use:   "edit <name>",
 		Short: "Edit and validate a profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := profile.PathFor(profilesDir, args[0])
+			path := profile.PathFor(rt.ProfilesDir, args[0])
 			if _, err := os.Stat(path); err != nil {
-				return wrapProfileStoreError(err, "access")
+				return wrapProfileStoreError(rt, err, "access")
 			}
 
 			before, err := os.ReadFile(path)
 			if err != nil {
-				return wrapProfileStoreError(err, "read")
+				return wrapProfileStoreError(rt, err, "read")
 			}
 
 			for {
@@ -200,7 +183,7 @@ func newEditCmd() *cobra.Command {
 						continue
 					case ui.EditChoiceRevert:
 						if writeErr := os.WriteFile(path, before, 0o644); writeErr != nil {
-							return wrapProfileStoreError(writeErr, "restore")
+							return wrapProfileStoreError(rt, writeErr, "restore")
 						}
 						fmt.Println("reverted changes")
 					case ui.EditChoiceKeepBroken:
@@ -214,29 +197,29 @@ func newEditCmd() *cobra.Command {
 	}
 }
 
-func newAddCmd() *cobra.Command {
+func newAddCmd(rt platform.Runtime) *cobra.Command {
 	return &cobra.Command{
 		Use:   "add <name>",
 		Short: "Create a new profile from the skeleton",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := os.MkdirAll(profilesDir, 0o755); err != nil {
-				return wrapProfileStoreError(err, "prepare")
+			if err := os.MkdirAll(rt.ProfilesDir, 0o755); err != nil {
+				return wrapProfileStoreError(rt, err, "prepare")
 			}
-			path := profile.PathFor(profilesDir, args[0])
+			path := profile.PathFor(rt.ProfilesDir, args[0])
 			file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 			if err != nil {
 				if errors.Is(err, os.ErrExist) {
 					return fmt.Errorf("profile %s already exists", args[0])
 				}
-				return wrapProfileStoreError(err, "create")
+				return wrapProfileStoreError(rt, err, "create")
 			}
 			if _, err := file.WriteString(skeleton); err != nil {
 				_ = file.Close()
-				return wrapProfileStoreError(err, "write")
+				return wrapProfileStoreError(rt, err, "write")
 			}
 			if err := file.Close(); err != nil {
-				return wrapProfileStoreError(err, "finalize")
+				return wrapProfileStoreError(rt, err, "finalize")
 			}
 			if err := openEditor(path); err != nil {
 				return err
@@ -250,7 +233,7 @@ func newAddCmd() *cobra.Command {
 	}
 }
 
-func newRmCmd() *cobra.Command {
+func newRmCmd(rt platform.Runtime) *cobra.Command {
 	allowForce := false
 	cmd := &cobra.Command{
 		Use:   "rm <name>",
@@ -258,7 +241,7 @@ func newRmCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			active, err := profile.ActiveName(activeLink)
+			active, err := rt.Activator.ActiveName()
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
@@ -273,8 +256,8 @@ func newRmCmd() *cobra.Command {
 				fmt.Println("cancelled")
 				return nil
 			}
-			if err := os.Remove(profile.PathFor(profilesDir, name)); err != nil {
-				return wrapProfileStoreError(err, "remove")
+			if err := os.Remove(profile.PathFor(rt.ProfilesDir, name)); err != nil {
+				return wrapProfileStoreError(rt, err, "remove")
 			}
 			fmt.Printf("✓ removed %s\n", name)
 			return nil
@@ -284,7 +267,7 @@ func newRmCmd() *cobra.Command {
 	return cmd
 }
 
-func newCheckCmd() *cobra.Command {
+func newCheckCmd(rt platform.Runtime) *cobra.Command {
 	return &cobra.Command{
 		Use:   "check [name]",
 		Short: "Validate a profile with sing-box check",
@@ -293,11 +276,7 @@ func newCheckCmd() *cobra.Command {
 			var path string
 			var label string
 			if len(args) == 0 {
-				target, err := os.Readlink(activeLink)
-				if err != nil {
-					return err
-				}
-				active, err := profile.ActivePath(activeLink)
+				active, err := rt.Activator.ActivePath()
 				if err != nil {
 					return err
 				}
@@ -305,16 +284,26 @@ func newCheckCmd() *cobra.Command {
 					if errors.Is(err, os.ErrNotExist) {
 						return cliError{
 							code: 1,
-							msg:  fmt.Sprintf("✗ active config symlink is broken: %s → %s", activeLink, target),
+							msg:  fmt.Sprintf("✗ active config is broken: %s", rt.ActiveConfigPath),
 						}
 					}
 					return err
 				}
 				path = active
 				label = strings.TrimSuffix(filepath.Base(active), filepath.Ext(active))
+				if rt.ActiveNamePath != "" {
+					if activeName, err := rt.Activator.ActiveName(); err == nil && activeName != "" {
+						label = activeName
+					}
+				}
 			} else {
 				label = args[0]
-				path = profile.PathFor(profilesDir, label)
+				path = profile.PathFor(rt.ProfilesDir, label)
+			}
+			if hasPlaceholders, markers, err := profile.HasPlaceholders(path); err != nil {
+				return err
+			} else if hasPlaceholders {
+				return placeholderError(label, markers)
 			}
 			if err := singbox.Check(path); err != nil {
 				return err
@@ -335,26 +324,26 @@ func newVersionCmd() *cobra.Command {
 	}
 }
 
-func runInteractive() error {
-	state, err := daemon.Status(daemonLabel)
+func runInteractive(rt platform.Runtime) error {
+	state, err := rt.Manager.Status()
 	if err != nil {
 		fmt.Println(ui.RenderStatus(daemon.StateError, "", ""))
 		return err
 	}
-	activeName, _ := profile.ActiveName(activeLink)
+	activeName, _ := rt.Activator.ActiveName()
 	tunName := ""
 	if activeName != "" {
-		tunName, _ = profile.InterfaceName(profile.PathFor(profilesDir, activeName))
+		tunName, _ = profile.InterfaceName(profile.PathFor(rt.ProfilesDir, activeName))
 	}
 
-	profiles, _, err := profile.List(profilesDir, activeLink)
+	profiles, _, err := profile.List(rt.ProfilesDir, rt.ActiveConfigPath)
 	if err != nil {
 		return err
 	}
 
 	if len(profiles) == 0 {
 		fmt.Println(ui.RenderStatus(state, activeName, tunName))
-		fmt.Printf("\nNo profiles found in %s.\nCreate one with:  sbctl add <name>\n", profilesDir)
+		fmt.Printf("\nNo profiles found in %s.\nCreate one with:  sbctl add <name>\n", rt.ProfilesDir)
 		return nil
 	}
 
@@ -369,60 +358,61 @@ func runInteractive() error {
 		return nil
 	}
 	if choice == ui.TurnOffChoice {
-		return newOffCmd().RunE(&cobra.Command{}, nil)
+		return newOffCmd(rt).RunE(&cobra.Command{}, nil)
 	}
 	if choice == activeName && state == daemon.StateRunning {
 		fmt.Printf("✓ %s already active\n", choice)
 		return nil
 	}
-	return useProfile(choice)
+	return useProfile(rt, choice)
 }
 
-func useProfile(name string) error {
-	path := profile.PathFor(profilesDir, name)
+func useProfile(rt platform.Runtime, name string) error {
+	path := profile.PathFor(rt.ProfilesDir, name)
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("profile %s not found", name)
 		}
 		return err
 	}
+	if hasPlaceholders, markers, err := profile.HasPlaceholders(path); err != nil {
+		return err
+	} else if hasPlaceholders {
+		return placeholderError(name, markers)
+	}
 	if err := singbox.Check(path); err != nil {
 		return err
 	}
-	oldTarget, oldTargetErr := os.Readlink(activeLink)
-	oldTargetKnown := oldTargetErr == nil
-	if oldTargetErr != nil && !errors.Is(oldTargetErr, os.ErrNotExist) {
-		return oldTargetErr
-	}
-	if err := sudo("ln", "-sfn", path, activeLink); err != nil {
-		return err
-	}
-	if err := daemon.Restart(daemonLabel, plistPath); err != nil {
-		if oldTargetKnown {
-			if revertErr := sudo("ln", "-sfn", oldTarget, activeLink); revertErr != nil {
-				fmt.Fprintf(os.Stderr, "✗ failed to restart sing-box: %v\n✗ failed to restore previous active profile %s: %v\n", err, oldTarget, revertErr)
-				return err
-			}
-			fmt.Fprintf(os.Stderr, "✗ failed to restart sing-box; reverted active profile to %s\n", oldTarget)
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "✗ failed to restart sing-box: %v\n✗ failed to restore previous active profile: no prior symlink target was set\n", err)
-		return err
-	}
-	fmt.Printf("✓ switched to %s\n", name)
-	notify(fmt.Sprintf("switched to %s", name))
-	return nil
-}
-
-func printStatus() error {
-	status, err := daemon.Status(daemonLabel)
+	rollback, err := rt.Activator.Activate(path)
 	if err != nil {
 		return err
 	}
-	activeName, _ := profile.ActiveName(activeLink)
+	if err := rt.Manager.Restart(); err != nil {
+		if rollback.Known() {
+			if revertErr := rollback.Rollback(); revertErr != nil {
+				fmt.Fprintf(os.Stderr, "✗ failed to restart sing-box: %v\n✗ failed to restore previous active profile %s: %v\n", err, rollback.Description(), revertErr)
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "✗ failed to restart sing-box; reverted active profile to %s\n", rollback.Description())
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "✗ failed to restart sing-box: %v\n✗ failed to restore previous active profile: no prior active profile was set\n", err)
+		return err
+	}
+	fmt.Printf("✓ switched to %s\n", name)
+	rt.Notifier.Notify(fmt.Sprintf("switched to %s", name))
+	return nil
+}
+
+func printStatus(rt platform.Runtime) error {
+	status, err := rt.Manager.Status()
+	if err != nil {
+		return err
+	}
+	activeName, _ := rt.Activator.ActiveName()
 	tunName := ""
 	if activeName != "" {
-		activePath := profile.PathFor(profilesDir, activeName)
+		activePath := profile.PathFor(rt.ProfilesDir, activeName)
 		tunName, _ = profile.InterfaceName(activePath)
 	}
 	fmt.Println(ui.RenderStatus(status, activeName, tunName))
@@ -442,43 +432,26 @@ func openEditor(path string) error {
 	return cmd.Run()
 }
 
-func notify(message string) {
-	cmd := exec.Command("osascript", "-e", fmt.Sprintf(`display notification "%s" with title "sing-box"`, appleScriptSafe(message)))
-	_ = cmd.Run()
-}
-
-var asciiNotificationFilter = regexp.MustCompile(`[^\x20-\x7E]+`)
-
 func appleScriptSafe(message string) string {
-	safe := asciiNotificationFilter.ReplaceAllString(message, " ")
-	safe = strings.ReplaceAll(safe, `"`, `'`)
-	safe = strings.Join(strings.Fields(safe), " ")
-	return safe
+	return platform.AppleScriptSafe(message)
 }
 
-func sudo(args ...string) error {
-	cmd := exec.Command("sudo", append([]string{"-n"}, args...)...)
-	var stderr bytes.Buffer
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
-	if err := cmd.Run(); err != nil {
-		if strings.Contains(stderr.String(), "a password is required") {
-			return cliError{code: 2, msg: "sudo access is not configured; finish /etc/sudoers.d/sbctl setup and retry"}
-		}
-		return err
-	}
-	return nil
-}
-
-func wrapProfileStoreError(err error, action string) error {
+func wrapProfileStoreError(rt platform.Runtime, err error, action string) error {
 	if err == nil {
 		return nil
 	}
 	if errors.Is(err, os.ErrPermission) {
 		return cliError{
 			code: 1,
-			msg:  fmt.Sprintf("failed to %s profile data: %v\nRun `make install` to repair ownership under %s.", action, err, profilesDir),
+			msg:  fmt.Sprintf("failed to %s profile data: %v\nRun `make install` to repair ownership under %s.", action, err, rt.ProfilesDir),
 		}
 	}
 	return err
+}
+
+func placeholderError(name string, markers []string) error {
+	return cliError{
+		code: 1,
+		msg:  fmt.Sprintf("profile %s still contains placeholder values: %s\nEdit it before activating or starting sing-box.", name, strings.Join(markers, ", ")),
+	}
 }
