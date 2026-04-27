@@ -17,9 +17,45 @@ if (($machinePath -split ";") -notcontains $installDir) {
   [Environment]::SetEnvironmentVariable("Path", "$machinePath;$installDir", "Machine")
 }
 
+function Refresh-ProcessPath {
+  $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $combined = @($machinePath, $userPath) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  $env:Path = ($combined -join ";")
+}
+
+function Find-SingBoxExecutable {
+  $command = Get-Command sing-box.exe -ErrorAction SilentlyContinue
+  if ($command) {
+    return $command.Source
+  }
+
+  $searchRoots = @(
+    (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages"),
+    $env:ProgramFiles,
+    ${env:ProgramFiles(x86)}
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+  foreach ($root in $searchRoots) {
+    if (-not (Test-Path $root)) {
+      continue
+    }
+
+    $match = Get-ChildItem -Path $root -Filter "sing-box.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($match) {
+      $env:Path = "$($match.DirectoryName);$env:Path"
+      return $match.FullName
+    }
+  }
+
+  $searched = ($searchRoots -join "; ")
+  throw "sing-box.exe was not found after winget install. Searched: $searched. Install SagerNet.sing-box with winget or add the sing-box.exe directory to PATH, then rerun scripts\install.ps1."
+}
+
 if (-not (Get-Command sing-box.exe -ErrorAction SilentlyContinue)) {
   if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
     winget install --exact --id SagerNet.sing-box --accept-package-agreements --accept-source-agreements
+    Refresh-ProcessPath
   } else {
     throw "sing-box.exe is not installed and winget is unavailable; install sing-box manually, then rerun scripts\install.ps1"
   }
@@ -35,7 +71,7 @@ if (-not (Test-Path $winswExe)) {
   Invoke-WebRequest -Uri $winswUrl -OutFile $winswExe
 }
 
-$singBox = (Get-Command sing-box.exe).Source
+$singBox = Find-SingBoxExecutable
 $configPath = Join-Path $programDataSingBox "config.json"
 $serviceXml = Join-Path $installDir "sing-box-service.xml"
 @"
@@ -62,7 +98,7 @@ if (Select-String -Path $defaultProfile -Pattern "TODO_SERVER_IP_OR_HOST|TODO_UU
   exit 0
 }
 
-& sing-box.exe check -c $defaultProfile
+& $singBox check -c $defaultProfile
 Copy-Item -Force $defaultProfile $configPath
 Set-Content -Encoding ASCII (Join-Path $sbctlDataDir "active-profile") "sg-cloudflare"
 & $winswExe restart

@@ -1,15 +1,18 @@
 package platform
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"sbctl/internal/daemon"
 	"sbctl/internal/profile"
@@ -106,7 +109,7 @@ func Windows() Runtime {
 		Manager:          daemon.WinSWManager{ServiceName: "sing-box"},
 		Activator:        profile.CopyActivator{ActiveConfigPath: active, ActiveNamePath: activeName},
 		Notifier:         NoopNotifier{},
-		LogFollower:      TailFileFollower{Path: errorLog},
+		LogFollower:      StreamingFileFollower{Path: errorLog, Lines: 80},
 	}
 }
 
@@ -140,6 +143,98 @@ func (f TailFileFollower) Follow(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+type StreamingFileFollower struct {
+	Path         string
+	Lines        int
+	PollInterval time.Duration
+}
+
+func (f StreamingFileFollower) Follow(ctx context.Context) error {
+	lines := f.Lines
+	if lines <= 0 {
+		lines = 80
+	}
+	pollInterval := f.PollInterval
+	if pollInterval <= 0 {
+		pollInterval = 500 * time.Millisecond
+	}
+
+	file, err := os.Open(f.Path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	offset, err := LastLinesOffset(file, lines)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return err
+	}
+
+	reader := bufio.NewReader(file)
+	for {
+		line, err := reader.ReadString('\n')
+		if line != "" {
+			fmt.Print(line)
+		}
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, io.EOF) {
+			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(pollInterval):
+			reader.Reset(file)
+		}
+	}
+}
+
+func LastLinesOffset(file *os.File, lines int) (int64, error) {
+	if lines <= 0 {
+		return 0, nil
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	size := info.Size()
+	if size == 0 {
+		return 0, nil
+	}
+
+	var count int
+	buf := make([]byte, 4096)
+	for pos := size; pos > 0; {
+		readSize := int64(len(buf))
+		if pos < readSize {
+			readSize = pos
+		}
+		pos -= readSize
+
+		if _, err := file.ReadAt(buf[:readSize], pos); err != nil {
+			return 0, err
+		}
+
+		for i := readSize - 1; i >= 0; i-- {
+			if buf[i] == '\n' {
+				count++
+				if count > lines {
+					return pos + i + 1, nil
+				}
+			}
+		}
+	}
+
+	return 0, nil
 }
 
 type CommandFollower struct {
