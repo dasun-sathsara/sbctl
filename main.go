@@ -99,6 +99,10 @@ func newListCmd(rt platform.Runtime) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			state, stateErr := rt.Manager.Status()
+			if stateErr != nil || state != daemon.StateRunning {
+				active = ""
+			}
 			fmt.Print(ui.RenderProfileList(profiles, active))
 			return nil
 		},
@@ -415,6 +419,9 @@ func runInteractive(rt platform.Runtime) error {
 		return err
 	}
 	activeName, _ := rt.Activator.ActiveName()
+	if state != daemon.StateRunning {
+		activeName = ""
+	}
 	tunName := ""
 	if activeName != "" {
 		tunName, _ = profile.InterfaceName(profile.PathFor(rt.ProfilesDir, activeName))
@@ -494,6 +501,9 @@ func printStatus(rt platform.Runtime) error {
 		return err
 	}
 	activeName, _ := rt.Activator.ActiveName()
+	if status != daemon.StateRunning {
+		activeName = ""
+	}
 	tunName := ""
 	if activeName != "" {
 		activePath := profile.PathFor(rt.ProfilesDir, activeName)
