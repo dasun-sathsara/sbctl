@@ -23,6 +23,7 @@ func (m LaunchdManager) Restart() error {
 		} else if fallbackErr := m.restartWithFallback(); fallbackErr != nil {
 			return fmt.Errorf("%v; fallback restart also failed: %w", err, fallbackErr)
 		}
+		// kickstart failed but fallback succeeded — continue without error.
 		return nil
 	}
 	return m.runLaunchctl("bootstrap", "system", m.PlistPath)

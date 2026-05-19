@@ -23,29 +23,20 @@ func (m SystemdManager) Stop() error {
 }
 
 func (m SystemdManager) Status() (RunState, error) {
-	cmd := exec.Command("sudo", "-n", "systemctl", "is-active", "--quiet", m.service())
+	cmd := exec.Command("sudo", "-n", "systemctl", "is-active", m.service())
 	out, err := cmd.CombinedOutput()
-	if err == nil {
-		return StateRunning, nil
-	}
 	text := strings.TrimSpace(string(out))
 	if strings.Contains(text, "a password is required") {
 		return StateError, sudoSetupError()
 	}
-	stateCmd := exec.Command("sudo", "-n", "systemctl", "is-active", m.service())
-	stateOut, stateErr := stateCmd.CombinedOutput()
-	stateText := strings.TrimSpace(string(stateOut))
-	if stateErr != nil {
-		if strings.Contains(stateText, "a password is required") {
-			return StateError, sudoSetupError()
-		}
-		if stateText == "inactive" || stateText == "failed" || stateText == "unknown" || strings.Contains(stateText, "could not be found") {
-			return StateStopped, nil
-		}
-		return StateError, fmt.Errorf("systemctl is-active failed: %w: %s", stateErr, stateText)
-	}
-	if stateText == "active" {
+	if err == nil && text == "active" {
 		return StateRunning, nil
+	}
+	if text == "inactive" || text == "failed" || text == "unknown" || strings.Contains(text, "could not be found") {
+		return StateStopped, nil
+	}
+	if err != nil {
+		return StateError, fmt.Errorf("systemctl is-active failed: %w: %s", err, text)
 	}
 	return StateStopped, nil
 }

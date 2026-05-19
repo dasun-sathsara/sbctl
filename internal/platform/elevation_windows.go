@@ -81,5 +81,6 @@ func RunElevated(args []string) (int, error) {
 		return int(exitCode), nil
 	}
 
-	return 0, nil
+	// No process handle returned — cannot verify outcome.
+	return 1, fmt.Errorf("elevated process started but no handle returned; cannot verify result")
 }
