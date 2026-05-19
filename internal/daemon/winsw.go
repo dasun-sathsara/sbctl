@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type WinSWManager struct {
@@ -13,6 +14,14 @@ type WinSWManager struct {
 func (m WinSWManager) Restart() error {
 	if err := m.runSC("stop", m.service()); err != nil && !strings.Contains(err.Error(), "service has not been started") {
 		return err
+	}
+	// Wait for service to fully stop before starting again.
+	for i := 0; i < 20; i++ {
+		state, _ := m.Status()
+		if state == StateStopped {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
 	return m.runSC("start", m.service())
 }
