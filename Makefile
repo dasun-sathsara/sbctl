@@ -21,3 +21,16 @@ fmt:
 
 vet:
 	go vet ./...
+
+# System tray app targets
+.PHONY: tray tray-windows tray-darwin
+
+tray:
+	go build -ldflags "-X main.version=$(VERSION)" -o bin/sbctl-tray ./cmd/sbctl-tray/
+
+tray-windows:
+	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION) -H windowsgui" -o bin/sbctl-tray.exe ./cmd/sbctl-tray/
+
+tray-darwin:
+	GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.version=$(VERSION)" -o bin/sbctl-tray-arm64 ./cmd/sbctl-tray/
+	GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o bin/sbctl-tray-amd64 ./cmd/sbctl-tray/
