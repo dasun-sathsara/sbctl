@@ -93,11 +93,15 @@ func newListCmd(rt platform.Runtime) *cobra.Command {
 		Short: "List profiles",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			profiles, active, err := profile.List(rt.ProfilesDir, rt.ActiveConfigPath)
+			if err != nil {
+				return err
+			}
 			if rt.ActiveNamePath != "" {
 				active, _ = rt.Activator.ActiveName()
 			}
-			if err != nil {
-				return err
+			state, stateErr := rt.Manager.Status()
+			if stateErr != nil || state != daemon.StateRunning {
+				active = ""
 			}
 			fmt.Print(ui.RenderProfileList(profiles, active))
 			return nil
@@ -121,14 +125,30 @@ func newOffCmd(rt platform.Runtime) *cobra.Command {
 		Use:   "off",
 		Short: "Stop sing-box",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := rt.Manager.Stop(); err != nil {
-				return err
-			}
-			fmt.Println("✓ sing-box stopped")
-			rt.Notifier.Notify("sing-box stopped")
-			return nil
+			return stopDaemon(rt)
 		},
 	}
+}
+
+func stopDaemon(rt platform.Runtime) error {
+	if !platform.IsElevated() {
+		exitCode, err := platform.RunElevated([]string{"off"})
+		if err != nil {
+			return err
+		}
+		if exitCode != 0 {
+			return cliError{code: exitCode, msg: "elevated process failed"}
+		}
+		fmt.Println("✓ sing-box stopped")
+		rt.Notifier.Notify("sing-box stopped")
+		return nil
+	}
+	if err := rt.Manager.Stop(); err != nil {
+		return err
+	}
+	fmt.Println("✓ sing-box stopped")
+	rt.Notifier.Notify("sing-box stopped")
+	return nil
 }
 
 func newStatusCmd(rt platform.Runtime) *cobra.Command {
@@ -146,6 +166,14 @@ func newLogsCmd(rt platform.Runtime) *cobra.Command {
 		Use:   "logs",
 		Short: "Tail sing-box error logs",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if rt.ErrorLogPath != "" {
+				if _, err := os.Stat(rt.ErrorLogPath); errors.Is(err, os.ErrNotExist) {
+					return cliError{
+						code: 1,
+						msg:  fmt.Sprintf("no log file found at %s\nStart sing-box first with: sbctl use <name>", rt.ErrorLogPath),
+					}
+				}
+			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
@@ -247,11 +275,10 @@ func newRmCmd(rt platform.Runtime) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			active, err := rt.Activator.ActiveName()
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			if name == active && !allowForce {
+			active, _ := rt.Activator.ActiveName()
+			// Only refuse deletion if the daemon is running with this profile active.
+			state, _ := rt.Manager.Status()
+			if name == active && state == daemon.StateRunning && !allowForce {
 				return fmt.Errorf("refusing to delete active profile %s without --force", name)
 			}
 			ok, err := ui.ConfirmDelete(name)
@@ -415,6 +442,9 @@ func runInteractive(rt platform.Runtime) error {
 		return err
 	}
 	activeName, _ := rt.Activator.ActiveName()
+	if state != daemon.StateRunning {
+		activeName = ""
+	}
 	tunName := ""
 	if activeName != "" {
 		tunName, _ = profile.InterfaceName(profile.PathFor(rt.ProfilesDir, activeName))
@@ -442,7 +472,7 @@ func runInteractive(rt platform.Runtime) error {
 		return nil
 	}
 	if choice == ui.TurnOffChoice {
-		return newOffCmd(rt).RunE(&cobra.Command{}, nil)
+		return stopDaemon(rt)
 	}
 	if choice == activeName && state == daemon.StateRunning {
 		fmt.Printf("✓ %s already active\n", choice)
@@ -452,6 +482,18 @@ func runInteractive(rt platform.Runtime) error {
 }
 
 func useProfile(rt platform.Runtime, name string) error {
+	if !platform.IsElevated() {
+		exitCode, err := platform.RunElevated([]string{"use", name})
+		if err != nil {
+			return err
+		}
+		if exitCode != 0 {
+			return cliError{code: exitCode, msg: "elevated process failed"}
+		}
+		fmt.Printf("✓ switched to %s\n", name)
+		rt.Notifier.Notify(fmt.Sprintf("switched to %s", name))
+		return nil
+	}
 	path := profile.PathFor(rt.ProfilesDir, name)
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -494,6 +536,9 @@ func printStatus(rt platform.Runtime) error {
 		return err
 	}
 	activeName, _ := rt.Activator.ActiveName()
+	if status != daemon.StateRunning {
+		activeName = ""
+	}
 	tunName := ""
 	if activeName != "" {
 		activePath := profile.PathFor(rt.ProfilesDir, activeName)

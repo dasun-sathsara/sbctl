@@ -145,7 +145,10 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	total := len(m.profiles) + 1 // profiles + turn-off
+	total := len(m.profiles)
+	if m.state == daemon.StateRunning {
+		total++ // include turn-off option only when running
+	}
 
 	switch km.String() {
 	case "ctrl+c", "esc", "q":
@@ -169,7 +172,7 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "end", "G":
 		m.cursor = total - 1
 	case "enter", " ":
-		if m.cursor == len(m.profiles) {
+		if m.state == daemon.StateRunning && m.cursor == len(m.profiles) {
 			m.choice = TurnOffChoice
 		} else {
 			m.choice = m.profiles[m.cursor].Name
@@ -196,9 +199,11 @@ func (m pickerModel) View() string {
 		b.WriteString(renderProfileRow(i == m.cursor, p.Name == m.active, p.Name))
 	}
 
-	// Spacer and separator before the destructive action.
-	b.WriteString("\n")
-	b.WriteString(renderOffRow(m.cursor == len(m.profiles)))
+	// Show turn-off option only when daemon is running.
+	if m.state == daemon.StateRunning {
+		b.WriteString("\n")
+		b.WriteString(renderOffRow(m.cursor == len(m.profiles)))
+	}
 
 	b.WriteString("\n")
 	b.WriteString(renderHelp())

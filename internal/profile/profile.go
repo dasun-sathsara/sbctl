@@ -97,6 +97,12 @@ func (a CopyActivator) ActiveName() (string, error) {
 }
 
 func (a CopyActivator) ActivePath() (string, error) {
+	if _, err := os.Stat(a.ActiveNamePath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
 	return a.ActiveConfigPath, nil
 }
 
@@ -306,5 +312,9 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	// On Windows, os.Rename fails if the destination exists.
+	// Remove the destination first; this is not perfectly atomic but
+	// avoids failures when overwriting existing config files.
+	_ = os.Remove(path)
 	return os.Rename(tmpName, path)
 }

@@ -50,7 +50,7 @@ install_darwin() {
   install_sudoers "$user_name ALL=(root) NOPASSWD: /bin/ln, /bin/launchctl" wheel
 
   tmp_plist="$(mktemp)"
-  trap 'rm -f "$tmp_plist"' RETURN
+  trap 'rm -f "$tmp_plist"' EXIT RETURN
   cat > "$tmp_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
