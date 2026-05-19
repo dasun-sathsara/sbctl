@@ -125,6 +125,18 @@ func newOffCmd(rt platform.Runtime) *cobra.Command {
 		Use:   "off",
 		Short: "Stop sing-box",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !platform.IsElevated() {
+				exitCode, err := platform.RunElevated([]string{"off"})
+				if err != nil {
+					return err
+				}
+				if exitCode != 0 {
+					return cliError{code: exitCode, msg: "elevated process failed"}
+				}
+				fmt.Println("✓ sing-box stopped")
+				rt.Notifier.Notify("sing-box stopped")
+				return nil
+			}
 			if err := rt.Manager.Stop(); err != nil {
 				return err
 			}
@@ -459,6 +471,18 @@ func runInteractive(rt platform.Runtime) error {
 }
 
 func useProfile(rt platform.Runtime, name string) error {
+	if !platform.IsElevated() {
+		exitCode, err := platform.RunElevated([]string{"use", name})
+		if err != nil {
+			return err
+		}
+		if exitCode != 0 {
+			return cliError{code: exitCode, msg: "elevated process failed"}
+		}
+		fmt.Printf("✓ switched to %s\n", name)
+		rt.Notifier.Notify(fmt.Sprintf("switched to %s", name))
+		return nil
+	}
 	path := profile.PathFor(rt.ProfilesDir, name)
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
