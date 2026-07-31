@@ -1,0 +1,6 @@
+╭────────────────────────────────────────────────╮
+│  sbctl                                         │
+│  state    ✗ error                              │
+│  profile  gone  (configured, not running)      │
+│  ✗ the active profile "gone" no longer exists  │
+╰────────────────────────────────────────────────╯

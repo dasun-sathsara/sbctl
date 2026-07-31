@@ -1,0 +1,39 @@
+version: "2"
+
+run:
+  timeout: 3m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - bodyclose
+    - errorlint
+    - nilerr
+    - unconvert
+
+  settings:
+    errcheck:
+      # Notifications and cosmetic writes are intentionally best-effort: a
+      # failed desktop notification must not fail a successful profile switch.
+      exclude-functions:
+        - (io.Writer).Write
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+  exclusions:
+    rules:
+      # Test fakes exist to be driven from other packages' tests, so exported
+      # identifiers without a caller inside their own package are expected.
+      - path: _test\.go
+        linters:
+          - unused
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt

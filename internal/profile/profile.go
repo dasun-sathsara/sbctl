@@ -1,225 +1,204 @@
+// Package profile models sing-box configuration profiles on disk and controls
+// which one the service currently reads.
 package profile
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 )
 
+// Extension is the required profile file suffix.
+const Extension = ".json"
+
+// Profile is one named configuration file.
 type Profile struct {
+	// Name is the filename without its extension.
 	Name string
+	// Path is the absolute file location.
 	Path string
+	// Placeholders lists unreplaced template markers. A profile with any
+	// placeholders is not activatable.
+	Placeholders []string
 }
 
-type Activator interface {
-	ActiveName() (string, error)
-	ActivePath() (string, error)
-	Activate(target string) (Rollback, error)
+// Ready reports whether the profile has no outstanding placeholders.
+func (p Profile) Ready() bool { return len(p.Placeholders) == 0 }
+
+// ErrInvalidName reports a profile name that cannot be used as a filename.
+var ErrInvalidName = errors.New("invalid profile name")
+
+// maxNameLength keeps names within every supported filesystem's limits while
+// leaving room for the extension.
+const maxNameLength = 64
+
+// windowsReservedNames are the DOS device names Windows still resolves in any
+// directory. A profile called "nul" would become NUL.json, which silently
+// discards everything written to it, and "con" would block waiting on the
+// console. They are rejected on every platform so that a profile directory stays
+// portable and a name means the same thing everywhere.
+var windowsReservedNames = map[string]struct{}{
+	"con": {}, "prn": {}, "aux": {}, "nul": {},
+	"com1": {}, "com2": {}, "com3": {}, "com4": {}, "com5": {},
+	"com6": {}, "com7": {}, "com8": {}, "com9": {},
+	"lpt1": {}, "lpt2": {}, "lpt3": {}, "lpt4": {}, "lpt5": {},
+	"lpt6": {}, "lpt7": {}, "lpt8": {}, "lpt9": {},
 }
 
-type Rollback interface {
-	Rollback() error
-	Description() string
-	Known() bool
-}
-
-type SymlinkActivator struct {
-	ActiveConfigPath string
-	UseSudo          bool
-}
-
-func (a SymlinkActivator) ActiveName() (string, error) {
-	path, err := a.ActivePath()
-	if err != nil {
-		return "", err
+// ValidateName rejects any name that would escape the profiles directory or
+// produce a surprising filename.
+//
+// Without this, a name is joined straight onto the profiles directory, so
+// `sbctl add ../../thing` writes outside the intended tree and `sbctl rm` can
+// delete an unrelated file. It also guarantees a profile path can never contain
+// a separator, which is what keeps the narrow sudoers glob effective.
+func ValidateName(name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("%w: name must not be empty", ErrInvalidName)
+	case len(name) > maxNameLength:
+		return fmt.Errorf("%w: %q is longer than %d characters", ErrInvalidName, name, maxNameLength)
+	case name == "." || name == "..":
+		return fmt.Errorf("%w: %q is a directory reference", ErrInvalidName, name)
+	case strings.HasPrefix(name, "-"):
+		return fmt.Errorf("%w: %q must not start with a dash, which would be read as a flag", ErrInvalidName, name)
+	case strings.HasPrefix(name, "."):
+		return fmt.Errorf("%w: %q must not start with a dot", ErrInvalidName, name)
+	case strings.HasSuffix(name, "."):
+		// Windows silently strips trailing dots, so "work." and "work" would be
+		// the same file while sbctl treated them as two separate profiles.
+		return fmt.Errorf("%w: %q must not end with a dot", ErrInvalidName, name)
 	}
-	if path == "" {
-		return "", nil
-	}
-	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)), nil
-}
-
-func (a SymlinkActivator) ActivePath() (string, error) {
-	path, err := ActivePath(a.ActiveConfigPath)
-	if errors.Is(err, ErrActiveConfigNotManaged) {
-		return "", nil
-	}
-	return path, err
-}
-
-func (a SymlinkActivator) Activate(target string) (Rollback, error) {
-	oldTarget, oldTargetErr := os.Readlink(a.ActiveConfigPath)
-	oldTargetKnown := oldTargetErr == nil
-	if oldTargetErr != nil && !errors.Is(oldTargetErr, os.ErrNotExist) {
-		return nil, oldTargetErr
-	}
-	if err := a.activate(target); err != nil {
-		return nil, err
-	}
-	return symlinkRollback{activeConfigPath: a.ActiveConfigPath, oldTarget: oldTarget, known: oldTargetKnown, useSudo: a.UseSudo}, nil
-}
-
-func (a SymlinkActivator) activate(target string) error {
-	if !a.UseSudo {
-		return Activate(a.ActiveConfigPath, target)
-	}
-	cmd := exec.Command("sudo", "-n", "ln", "-sfn", target, a.ActiveConfigPath)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		text := strings.TrimSpace(string(out))
-		if strings.Contains(text, "a password is required") {
-			return fmt.Errorf("sudo access is not configured; finish /etc/sudoers.d/sbctl setup and retry")
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return fmt.Errorf("%w: %q contains %q; use letters, digits, dot, dash or underscore", ErrInvalidName, name, r)
 		}
-		return fmt.Errorf("sudo ln -sfn failed: %w: %s", err, text)
+	}
+	// Windows resolves device names from the stem, so "nul.json" is still NUL.
+	stem, _, _ := strings.Cut(strings.ToLower(name), ".")
+	if _, reserved := windowsReservedNames[stem]; reserved {
+		return fmt.Errorf("%w: %q is a reserved device name on Windows", ErrInvalidName, name)
 	}
 	return nil
 }
 
-type CopyActivator struct {
-	ActiveConfigPath string
-	ActiveNamePath   string
+// PathFor returns the file path for a profile name. The name must already have
+// passed ValidateName.
+func PathFor(profilesDir, name string) string {
+	return filepath.Join(profilesDir, name+Extension)
 }
 
-func (a CopyActivator) ActiveName() (string, error) {
-	data, err := os.ReadFile(a.ActiveNamePath)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(data)), nil
+// NameFor returns the profile name for a config file path.
+func NameFor(path string) string {
+	base := filepath.Base(path)
+	return strings.TrimSuffix(base, filepath.Ext(base))
 }
 
-func (a CopyActivator) ActivePath() (string, error) {
-	if _, err := os.Stat(a.ActiveNamePath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", nil
-		}
-		return "", err
-	}
-	return a.ActiveConfigPath, nil
-}
-
-func (a CopyActivator) Activate(target string) (Rollback, error) {
-	oldConfig, configErr := os.ReadFile(a.ActiveConfigPath)
-	oldName, nameErr := os.ReadFile(a.ActiveNamePath)
-	known := configErr == nil && nameErr == nil
-	if configErr != nil && !errors.Is(configErr, os.ErrNotExist) {
-		return nil, configErr
-	}
-	if nameErr != nil && !errors.Is(nameErr, os.ErrNotExist) {
-		return nil, nameErr
-	}
-	if err := copyFileAtomic(target, a.ActiveConfigPath, 0o644); err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(filepath.Dir(a.ActiveNamePath), 0o755); err != nil {
-		return nil, err
-	}
-	name := strings.TrimSuffix(filepath.Base(target), filepath.Ext(target))
-	if err := os.WriteFile(a.ActiveNamePath, []byte(name+"\n"), 0o644); err != nil {
-		return nil, err
-	}
-	return copyRollback{activeConfigPath: a.ActiveConfigPath, activeNamePath: a.ActiveNamePath, oldConfig: oldConfig, oldName: oldName, known: known}, nil
-}
-
-func List(profilesDir, activeLink string) ([]Profile, string, error) {
+// List returns every profile in profilesDir, sorted by name. A missing
+// directory yields no profiles rather than an error, so a fresh install reports
+// "no profiles" instead of a filesystem error.
+func List(profilesDir string) ([]Profile, error) {
 	entries, err := os.ReadDir(profilesDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, "", nil
+			return nil, nil
 		}
-		return nil, "", err
+		return nil, err
 	}
-	active, _ := ActiveName(activeLink)
-	var profiles []Profile
+
+	profiles := make([]Profile, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), Extension) {
 			continue
 		}
-		name := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		path := filepath.Join(profilesDir, entry.Name())
+		markers, err := Placeholders(path)
+		if err != nil {
+			// An unreadable profile is still worth listing; the specific error
+			// surfaces when the user tries to use it.
+			markers = nil
+		}
 		profiles = append(profiles, Profile{
-			Name: name,
-			Path: filepath.Join(profilesDir, entry.Name()),
+			Name:         NameFor(entry.Name()),
+			Path:         path,
+			Placeholders: markers,
 		})
 	}
 	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
-	return profiles, active, nil
+	return profiles, nil
 }
 
-func ActivePath(activeLink string) (string, error) {
-	target, err := os.Readlink(activeLink)
-	if err != nil {
-		if errors.Is(err, syscall.EINVAL) {
-			return "", ErrActiveConfigNotManaged
+// Find returns the named profile from a slice, reporting whether it exists.
+func Find(profiles []Profile, name string) (Profile, bool) {
+	for _, p := range profiles {
+		if p.Name == name {
+			return p, true
 		}
-		return "", err
 	}
-	if filepath.IsAbs(target) {
-		return target, nil
-	}
-	return filepath.Clean(filepath.Join(filepath.Dir(activeLink), target)), nil
+	return Profile{}, false
 }
 
-var ErrActiveConfigNotManaged = errors.New("active config is not managed by sbctl")
-
-func ActiveName(activeLink string) (string, error) {
-	path, err := ActivePath(activeLink)
-	if err != nil {
-		return "", err
+// Names returns the profile names in order.
+func Names(profiles []Profile) []string {
+	names := make([]string, len(profiles))
+	for i, p := range profiles {
+		names[i] = p.Name
 	}
-	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)), nil
+	return names
 }
 
-func PathFor(profilesDir, name string) string {
-	return filepath.Join(profilesDir, fmt.Sprintf("%s.json", name))
-}
+// placeholderPattern matches any template marker in the seed profile.
+//
+// Matching the TODO_ prefix generically, rather than a hardcoded list of the
+// five markers that happened to exist, means adding a field to the skeleton
+// cannot silently disable the guard that stops a template being activated.
+var placeholderPattern = regexp.MustCompile(`TODO_[A-Z0-9_]+`)
 
-func Activate(activeLink, target string) error {
-	if _, err := os.Stat(target); err != nil {
-		return err
-	}
-	dir := filepath.Dir(activeLink)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	_ = os.Remove(activeLink)
-	return os.Symlink(target, activeLink)
-}
-
-func HasPlaceholders(path string) (bool, []string, error) {
+// Placeholders returns the sorted, deduplicated template markers still present
+// in a profile.
+func Placeholders(path string) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false, nil, err
+		return nil, err
 	}
-	markers := []string{
-		"TODO_SERVER_IP_OR_HOST",
-		"TODO_UUID",
-		"TODO_SNI_HOSTNAME",
-		"TODO_REALITY_PUBLIC_KEY",
-		"TODO_SHORT_ID",
-	}
-	var found []string
-	for _, marker := range markers {
-		if bytes.Contains(data, []byte(marker)) {
-			found = append(found, marker)
-		}
-	}
-	return len(found) > 0, found, nil
+	return PlaceholdersIn(data), nil
 }
 
+// PlaceholdersIn returns the markers present in profile content.
+func PlaceholdersIn(data []byte) []string {
+	matches := placeholderPattern.FindAll(data, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(matches))
+	found := make([]string, 0, len(matches))
+	for _, m := range matches {
+		marker := string(m)
+		if _, ok := seen[marker]; ok {
+			continue
+		}
+		seen[marker] = struct{}{}
+		found = append(found, marker)
+	}
+	sort.Strings(found)
+	return found
+}
+
+// InterfaceName returns the TUN interface name declared by a profile, or an
+// empty string when the profile leaves it for sing-box to choose.
 func InterfaceName(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-
 	var payload struct {
 		Inbounds []struct {
 			Type          string `json:"type"`
@@ -237,84 +216,31 @@ func InterfaceName(path string) (string, error) {
 	return "", nil
 }
 
-type symlinkRollback struct {
-	activeConfigPath string
-	oldTarget        string
-	known            bool
-	useSudo          bool
-}
-
-func (r symlinkRollback) Rollback() error {
-	if !r.known {
-		return fmt.Errorf("no prior symlink target was set")
-	}
-	return SymlinkActivator{ActiveConfigPath: r.activeConfigPath, UseSudo: r.useSudo}.activate(r.oldTarget)
-}
-
-func (r symlinkRollback) Description() string { return r.oldTarget }
-func (r symlinkRollback) Known() bool         { return r.known }
-
-type copyRollback struct {
-	activeConfigPath string
-	activeNamePath   string
-	oldConfig        []byte
-	oldName          []byte
-	known            bool
-}
-
-func (r copyRollback) Rollback() error {
-	if !r.known {
-		return fmt.Errorf("no prior active config was set")
-	}
-	if err := writeFileAtomic(r.activeConfigPath, r.oldConfig, 0o644); err != nil {
-		return err
-	}
-	return writeFileAtomic(r.activeNamePath, r.oldName, 0o644)
-}
-
-func (r copyRollback) Description() string {
-	return strings.TrimSpace(string(r.oldName))
-}
-
-func (r copyRollback) Known() bool { return r.known }
-
-func copyFileAtomic(src, dst string, perm os.FileMode) error {
-	in, err := os.Open(src)
+// Server returns a short "host:port" summary of the first non-direct outbound,
+// used to give the profile list some context beyond a bare name.
+func Server(path string) (string, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return "", err
 	}
-	defer in.Close()
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, in); err != nil {
-		return err
+	var payload struct {
+		Outbounds []struct {
+			Type       string `json:"type"`
+			Server     string `json:"server"`
+			ServerPort int    `json:"server_port"`
+		} `json:"outbounds"`
 	}
-	return writeFileAtomic(dst, buf.Bytes(), perm)
-}
-
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return "", err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".sbctl-*")
-	if err != nil {
-		return err
+	for _, out := range payload.Outbounds {
+		if out.Server == "" || out.Type == "direct" || out.Type == "block" {
+			continue
+		}
+		if out.ServerPort > 0 {
+			return fmt.Sprintf("%s:%d", out.Server, out.ServerPort), nil
+		}
+		return out.Server, nil
 	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	// On Windows, os.Rename fails if the destination exists.
-	// Remove the destination first; this is not perfectly atomic but
-	// avoids failures when overwriting existing config files.
-	_ = os.Remove(path)
-	return os.Rename(tmpName, path)
+	return "", nil
 }

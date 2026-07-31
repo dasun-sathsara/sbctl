@@ -1,112 +1,231 @@
 # sbctl
 
-`sbctl` is a platform-aware CLI for switching sing-box client profiles, checking status, following logs, and toggling the privileged service that runs sing-box in TUN mode.
+A cross-platform command-line tool for switching [sing-box](https://sing-box.sagernet.org/)
+client profiles and controlling the privileged service that runs sing-box in TUN
+mode.
 
-## Features
+Run it with no arguments to pick a profile interactively; every action is also a
+subcommand so it can be scripted.
 
-- Interactive default TUI picker built with `huh`
-- Plain CLI flows for `list`, `use`, `off`, `status`, `logs`, `edit`, `add`, `rm`, `check`, `ip`, and `version`
-- macOS LaunchDaemon support
-- Debian-family Linux systemd support
-- Windows machine-wide WinSW service support
-- Placeholder seed profile with activation blocked until real endpoint values are supplied
+```
+╭────────────────────────────────╮
+│  sbctl                         │
+│  state    ● running            │
+│  profile  work                 │
+│  server   vpn.example.com:443  │
+│  tun      tun0                 │
+│  pid      4711                 │
+╰────────────────────────────────╯
+
+  ▸ ● work      active
+    ○ home
+    ⚠ template  placeholders
+
+    ✗ Turn off
+
+  ↑/↓ move  ·  enter select  ·  q quit
+```
+
+## What makes it different
+
+**A switch that fails is reported as a failure.** A sing-box configuration can
+pass validation, start cleanly, and then die immediately — an unreachable server,
+a stale Reality key, the wrong SNI. Telling the platform to restart the service
+succeeds in all of those cases. sbctl samples the service's liveness before and
+after activation and compares them, so a process that started and was immediately
+restarted by its supervisor is recognised as a crash loop rather than a success.
+When that happens it restores the previous profile, restarts on it, and tells you
+where to look. An activation that silently takes your network down is the worst
+thing this tool could do, so it is the thing it works hardest to avoid.
+
+**Privileges are scoped to individual commands.** sbctl needs root for five
+operations on macOS and four on Linux. Its sudo rules name exactly those, with
+fixed arguments, rather than granting whole binaries — and `sbctl doctor` checks
+each one individually. See [SECURITY.md](SECURITY.md), including an honest account
+of what remains unfixed.
+
+**Every failure comes with the command that fixes it.**
+
+```
+✗ work still contains placeholder values: TODO_SERVER_IP_OR_HOST and TODO_UUID
+  → fill them in with: sbctl edit work
+  → every TODO_ marker must be replaced before the profile can be used
+```
+
+## Platform support
+
+| Platform | Service | Active config | Logs |
+|---|---|---|---|
+| macOS | launchd system daemon (`app.lexiflix.singbox`) | symlink at `/usr/local/etc/sing-box/config.json` | `/var/log/sing-box/error.log` |
+| Debian-family Linux | systemd unit (`sing-box`) | symlink at `/etc/sing-box/config.json` | journald |
+| Windows | WinSW service (`sing-box`) | copy at `%ProgramData%\sing-box\config.json` | `%ProgramData%\sing-box\logs` |
 
 ## Install
 
-### macOS
+### macOS and Debian-family Linux
 
 ```bash
 make install
 ```
 
-The installer builds `/usr/local/bin/sbctl`, verifies or installs sing-box with Homebrew, creates `/usr/local/etc/sing-box/profiles`, installs `/Library/LaunchDaemons/app.lexiflix.singbox.plist`, and writes `/etc/sudoers.d/sbctl` after `visudo -cf` validation. It seeds `sg-cloudflare.json` from `assets/skeleton.json` only when absent and does not start sing-box while placeholders remain.
+This builds the binary, installs it to `/usr/local/bin/sbctl`, installs or
+verifies sing-box, creates the profiles directory, registers the service, and
+writes `/etc/sudoers.d/sbctl` after validating it with `visudo`. It seeds a
+template profile only when none exists, and does not start sing-box while
+placeholder values remain.
 
-### Debian-Family Linux
-
-```bash
-make install
-```
-
-The installer accepts systems with `ID=debian` or `ID_LIKE` containing `debian`, installs or upgrades sing-box to at least `1.13.8`, creates `/etc/sing-box/profiles`, enables the `sing-box` systemd service, and writes `/etc/sudoers.d/sbctl` after validation. It tries the SagerNet APT repository first, then falls back to the upstream GitHub `.deb` for the detected architecture if APT serves an older build. It does not start sing-box while placeholders remain.
+On Linux the installer also confirms the packaged systemd unit actually reads the
+config file sbctl manages, adding a drop-in if it does not — otherwise profile
+switches would appear to work while having no effect.
 
 ### Windows
 
-From elevated PowerShell:
+From an elevated PowerShell prompt:
 
 ```powershell
-go build -ldflags "-X main.version=dev" -o bin\sbctl.exe .
+go build -o bin\sbctl.exe .\cmd\sbctl
 .\scripts\install.ps1
 ```
 
-The installer copies `sbctl.exe` to `%ProgramFiles%\sbctl`, adds that directory to the machine PATH, verifies or installs sing-box with winget, creates `%ProgramData%\sing-box` and `%ProgramData%\sbctl`, installs WinSW, and configures the `sing-box` service. It does not start sing-box while placeholders remain.
+This installs to `%ProgramFiles%\sbctl`, adds it to the machine PATH, installs or
+verifies sing-box, downloads a pinned WinSW release, hardens the ACLs on
+`%ProgramData%\sing-box`, and registers the service.
+
+### Upgrading an existing installation
+
+Re-run `make install`. The sudo rules changed in this release, and the new
+narrower rules are only installed by the installer. Both upgrade orders are safe
+in the meantime — the previous rules are a superset of the commands this build
+issues — and `sbctl doctor` reports any mismatch.
 
 ## Usage
 
 ```bash
-sbctl
-sbctl list
-sbctl use sg-cloudflare
-sbctl off
-sbctl status
-sbctl logs
-sbctl edit sg-cloudflare
-sbctl add work-vpn
-sbctl rm work-vpn
-sbctl check
-sbctl check sg-cloudflare
-sbctl ip
+sbctl                     # status panel plus an interactive picker
+sbctl list                # list profiles
+sbctl use work            # switch, verify, roll back on failure
+sbctl use                 # pick interactively
+sbctl off                 # stop sing-box
+sbctl status              # current state
+sbctl logs                # follow service output
+sbctl add work            # create from the template and edit
+sbctl edit work           # edit, validate, reload if it is in service
+sbctl rm work             # delete, with confirmation
+sbctl check               # validate the active profile
+sbctl check work          # validate a specific profile
+sbctl ip                  # public IP, network and location
+sbctl doctor              # diagnose the installation
 sbctl version
+sbctl completion zsh      # shell completions
 ```
 
-## Commands
+### Commands
 
-- `sbctl` renders a status panel and opens an interactive picker. Escape cancels.
-- `sbctl list` prints profiles and marks the active profile with a green `●`.
-- `sbctl use <name>` validates the profile, blocks placeholder configs, activates it, restarts the service, and rolls back activation if restart fails.
-- `sbctl off` stops the managed service.
-- `sbctl status` prints a bordered panel with run state, active profile, and configured TUN name.
-- `sbctl logs` tails the native log source: macOS file logs, Linux `journalctl -fu sing-box`, or the WinSW error log on Windows.
-- `sbctl edit <name>` opens the profile in `$EDITOR` or `nvim`, validates with `sing-box check -c`, and lets you re-edit, revert, or keep a broken file on failure.
-- `sbctl add <name>` copies `assets/skeleton.json`, opens it in your editor, and validates it.
-- `sbctl rm <name>` deletes a profile after confirmation, refusing the active one unless `--force`.
-- `sbctl check [name]` validates a named profile or the active one and reports broken active config state clearly.
-- `sbctl ip` prints the current public IP, ISP/ASN, and approximate location from `ipinfo.io`.
+- `sbctl` renders the status panel and opens the picker. Long lists scroll; a
+  filter appears once there are at least eight profiles. Escape or `q` cancels,
+  exiting successfully.
+- `sbctl use <name>` validates the profile, refuses it if placeholders remain,
+  activates it, restarts the service, then confirms it stayed up — rolling back
+  to the previous profile if it did not.
+- `sbctl off` stops the service. The active profile is remembered.
+- `sbctl status` reports run state, profile, server, TUN interface and pid, and
+  flags an active config that points at a deleted profile.
+- `sbctl logs` follows journald on Linux and the service log file elsewhere.
+- `sbctl edit <name>` opens `$VISUAL`/`$EDITOR`, validates, and offers to edit
+  again, discard, or keep on failure. Editing the profile in service also reloads
+  it. Discarding restores the file's original permissions.
+- `sbctl add <name>` creates from the template, then behaves like `edit`.
+  Discarding removes the new file rather than leaving a broken profile behind.
+- `sbctl rm <name>` deletes after confirmation. Deleting the profile in service
+  requires `--force`, which stops sing-box first so it is never left reading a
+  file that no longer exists.
+- `sbctl check [name]` validates a profile and reports both placeholder markers
+  and sing-box's own diagnostics.
+- `sbctl doctor` checks sing-box, the profiles directory, each individual sudo
+  permission, the service, and the active config.
 
-## Placeholder Profile
+### Global flags
 
-`assets/skeleton.json` is the single canonical seed profile. It intentionally contains:
+| Flag | Effect |
+|---|---|
+| `--json` | machine-readable output; every payload carries `"schema": 1` |
+| `--plain` | ASCII symbols, no borders or colour — the stable text interface |
+| `--no-color` | disable colour, keep Unicode (`NO_COLOR` is also honoured) |
+| `-q, --quiet` | suppress informational output; errors still print |
+| `-v, --verbose` | print the commands, paths and timings sbctl uses |
 
-- `TODO_SERVER_IP_OR_HOST`
-- `TODO_UUID`
-- `TODO_SNI_HOSTNAME`
-- `TODO_REALITY_PUBLIC_KEY`
-- `TODO_SHORT_ID`
+`--json` takes precedence over `--plain` and `--no-color` when combined, since
+JSON carries no decoration to degrade.
 
-Replace those values before running `sbctl use <profile>`.
+Colour is disabled automatically when output is not a terminal, so piping is
+already safe. Plain mode is selected automatically for `TERM=dumb` and terminals
+narrower than 50 columns. Symbols do **not** change based on whether output is
+piped: the same command produces the same bytes regardless of destination, so
+`sbctl list | grep ●` behaves predictably. For scripting, prefer `--json`.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | success — including cancelling an interactive prompt |
+| 1 | general error: bad usage, unknown profile, I/O, network |
+| 2 | validation: placeholders remain, or sing-box rejected the config |
+| 3 | service: it would not start or stop, or it failed the post-activation check |
+| 4 | permission: sudo rules missing, or elevation declined |
+
+## Profile template
+
+`assets/skeleton.json` is the single canonical seed profile, embedded into the
+binary and used by the installers. It contains `TODO_` markers which must all be
+replaced before a profile can be activated. The check matches the `TODO_` prefix
+generically, so adding a field to the template cannot bypass it.
 
 ## Uninstall
 
-macOS and Debian-family Linux:
-
 ```bash
-make uninstall
+make uninstall            # macOS, Linux
+.\scripts\uninstall.ps1   # Windows, elevated
 ```
 
-Windows, from elevated PowerShell:
-
-```powershell
-.\scripts\uninstall.ps1
-```
-
-Uninstall removes service wiring, sudoers entries where applicable, the active config, and the installed CLI. It intentionally leaves profile directories and logs in place so user profiles and operational history are not destroyed by accident. Remove those directories manually for a full reset.
+This removes the service registration, sudo rules, active config, PATH entry
+(Windows) and the binary. Profiles and logs are deliberately preserved; the paths
+to remove manually are printed.
 
 ## Troubleshooting
 
-- `sudo: a password is required`
-  Ensure `/etc/sudoers.d/sbctl` exists, is mode `440`, and validates with `visudo -cf /etc/sudoers.d/sbctl`.
-- `profile ... still contains placeholder values`
-  Edit the profile and replace every `TODO_*` marker before activation.
-- `systemctl` or `launchctl` shows the service is not running
-  Check `sbctl logs`, then run `sbctl check <profile>` on the active profile.
-- TUN interface does not exist after `sbctl use`
-  The profile may be valid JSON but not operational. Inspect logs and confirm your VLESS/Reality values are correct.
+Start with `sbctl doctor` — it checks each dependency individually and names what
+is wrong.
+
+**`sbctl is not allowed to manage the sing-box service without a password`**
+The sudo rules are missing or stale. Run `sudo make install`, then `sbctl doctor`
+to confirm which permission was not matched.
+
+**`... still contains placeholder values`**
+Run `sbctl edit <name>` and replace every `TODO_` marker.
+
+**`started but service restarted N time(s) while starting up`**
+The configuration is valid but not working, so sbctl reverted to the previous
+profile. Run `sbctl logs` for sing-box's own diagnosis; the usual causes are a
+wrong server address, an expired Reality key, or an unreachable SNI.
+
+**`the active profile "x" no longer exists`**
+The profile was deleted while still selected. Run `sbctl use <name>` to point the
+service somewhere valid.
+
+**A profile switch appears to work but traffic is unchanged (Linux)**
+The packaged systemd unit may not read the config sbctl manages. `sudo make
+install` installs a drop-in that pins it; `sbctl doctor` reports the mismatch.
+
+## Development
+
+```bash
+make check    # gofmt, vet, tests
+make test
+make cross    # verify all three platforms still compile
+make lint     # golangci-lint, if installed
+```
+
+Concurrency is not supported: sbctl assumes one instance at a time and takes no
+lock. See [SECURITY.md](SECURITY.md) for the threat model and known limitations,
+and [docs/manual-verification.md](docs/manual-verification.md) for what must be
+checked on a real machine before release.

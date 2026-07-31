@@ -3,84 +3,114 @@ package platform
 import (
 	"fmt"
 	"os"
-	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-// IsElevated checks if the current process is running with administrator privileges.
-func IsElevated() bool {
+// WindowsElevator re-launches sbctl through ShellExecuteExW with the "runas"
+// verb, which raises a UAC consent prompt.
+type WindowsElevator struct{}
+
+// NewElevator returns the elevation strategy for this host.
+func NewElevator() Elevator { return WindowsElevator{} }
+
+// IsElevated reports whether the process token is elevated.
+func (WindowsElevator) IsElevated() bool {
 	return windows.GetCurrentProcessToken().IsElevated()
 }
 
-// RunElevated re-launches the current executable with the given arguments
-// using the "runas" verb to trigger UAC elevation. It waits for the elevated
-// process to complete and returns its exit code.
-func RunElevated(args []string) (int, error) {
+const (
+	seeMaskNoCloseProcess = 0x00000040
+	seeMaskFlagNoUI       = 0x00000400
+	swShowNormal          = 1
+)
+
+type shellExecuteInfo struct {
+	cbSize       uint32
+	fMask        uint32
+	hwnd         uintptr
+	lpVerb       *uint16
+	lpFile       *uint16
+	lpParameters *uint16
+	lpDirectory  *uint16
+	nShow        int32
+	hInstApp     uintptr
+	lpIDList     uintptr
+	lpClass      *uint16
+	hkeyClass    uintptr
+	dwHotKey     uint32
+	hIcon        uintptr
+	hProcess     uintptr
+}
+
+// RunElevated launches an elevated copy of sbctl with args and waits for it.
+//
+// The child window is shown rather than hidden. Hiding it previously made every
+// error the elevated process printed invisible, while the parent unconditionally
+// reported success; a brief console window is a much smaller cost than silent
+// failure. Because the child prints its own output, the caller must not emit a
+// duplicate success message.
+func (WindowsElevator) RunElevated(args []string) (int, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return 1, fmt.Errorf("cannot determine executable path: %w", err)
 	}
 
-	verb, _ := windows.UTF16PtrFromString("runas")
-	exePtr, _ := windows.UTF16PtrFromString(exe)
-	argStr, _ := windows.UTF16PtrFromString(strings.Join(args, " "))
-
-	const (
-		seeMaskNocloseprocess = 0x00000040
-		swHide                = 0
-	)
-
-	type shellExecuteInfo struct {
-		cbSize       uint32
-		fMask        uint32
-		hwnd         uintptr
-		lpVerb       *uint16
-		lpFile       *uint16
-		lpParameters *uint16
-		lpDirectory  *uint16
-		nShow        int32
-		hInstApp     uintptr
-		lpIDList     uintptr
-		lpClass      *uint16
-		hkeyClass    uintptr
-		dwHotKey     uint32
-		hIcon        uintptr
-		hProcess     uintptr
+	verb, err := windows.UTF16PtrFromString("runas")
+	if err != nil {
+		return 1, err
+	}
+	exePtr, err := windows.UTF16PtrFromString(exe)
+	if err != nil {
+		return 1, err
+	}
+	// Arguments must be quoted individually; joining with spaces corrupts any
+	// value containing whitespace and allows argument injection.
+	argPtr, err := windows.UTF16PtrFromString(QuoteArgs(args))
+	if err != nil {
+		return 1, err
 	}
 
 	shell32 := windows.NewLazySystemDLL("shell32.dll")
 	shellExecuteEx := shell32.NewProc("ShellExecuteExW")
 
 	sei := shellExecuteInfo{
-		fMask:        seeMaskNocloseprocess,
+		fMask:        seeMaskNoCloseProcess | seeMaskFlagNoUI,
 		lpVerb:       verb,
 		lpFile:       exePtr,
-		lpParameters: argStr,
-		nShow:        swHide,
+		lpParameters: argPtr,
+		nShow:        swShowNormal,
 	}
 	sei.cbSize = uint32(unsafe.Sizeof(sei))
 
 	ret, _, callErr := shellExecuteEx.Call(uintptr(unsafe.Pointer(&sei)))
 	if ret == 0 {
-		// Error code 1223 means the user cancelled the UAC prompt
-		if callErr != nil && strings.Contains(callErr.Error(), "1223") {
-			return 1, fmt.Errorf("elevation cancelled by user")
+		// Compare the numeric error rather than matching on message text,
+		// which is locale-dependent.
+		if errno, ok := callErr.(windows.Errno); ok {
+			switch errno {
+			case windows.ERROR_CANCELLED:
+				return 1, fmt.Errorf("elevation was declined")
+			case windows.ERROR_ACCESS_DENIED:
+				return 1, fmt.Errorf("elevation was denied by policy")
+			}
 		}
-		return 1, fmt.Errorf("ShellExecuteEx failed: %v", callErr)
+		return 1, fmt.Errorf("could not request elevation: %w", callErr)
 	}
 
-	// Wait for the elevated process to finish and propagate its exit code.
 	handle := windows.Handle(sei.hProcess)
-	if handle != 0 {
-		windows.WaitForSingleObject(handle, windows.INFINITE)
-		var exitCode uint32
-		windows.GetExitCodeProcess(handle, &exitCode)
-		windows.CloseHandle(handle)
-		return int(exitCode), nil
+	if handle == 0 {
+		return 1, fmt.Errorf("elevated process started but returned no handle, so its result cannot be confirmed")
 	}
+	defer windows.CloseHandle(handle)
 
-	// No process handle returned — cannot verify outcome.
-	return 1, fmt.Errorf("elevated process started but no handle returned; cannot verify result")
+	if _, err := windows.WaitForSingleObject(handle, windows.INFINITE); err != nil {
+		return 1, fmt.Errorf("waiting for the elevated process failed: %w", err)
+	}
+	var exitCode uint32
+	if err := windows.GetExitCodeProcess(handle, &exitCode); err != nil {
+		return 1, fmt.Errorf("could not read the elevated process exit code: %w", err)
+	}
+	return int(exitCode), nil
 }

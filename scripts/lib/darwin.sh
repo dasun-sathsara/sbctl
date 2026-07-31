@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 # shellcheck source=scripts/lib/common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
@@ -9,25 +10,14 @@ install_darwin() {
   local plist_path="/Library/LaunchDaemons/app.lexiflix.singbox.plist"
   local log_dir="/var/log/sing-box"
   local default_profile_path="$profiles_dir/$default_profile_name.json"
-  local singbox_bin
-  local tmp_plist
 
-  if ! command -v sing-box >/dev/null 2>&1; then
-    local brew_bin=""
-    if command -v brew >/dev/null 2>&1; then
-      brew_bin="$(command -v brew)"
-    elif [[ -x /opt/homebrew/bin/brew ]]; then
-      brew_bin="/opt/homebrew/bin/brew"
-    elif [[ -x /usr/local/bin/brew ]]; then
-      brew_bin="/usr/local/bin/brew"
-    fi
-    if [[ -n "$brew_bin" ]]; then
-      sudo -u "$user_name" "$brew_bin" install sing-box
-    else
-      echo "sing-box is not installed and Homebrew is unavailable; install Homebrew or sing-box, then rerun make install" >&2
-      exit 1
-    fi
-  fi
+  ensure_singbox_darwin
+  verify_singbox
+
+  # Resolve the real binary path. Homebrew installs to /opt/homebrew on Apple
+  # Silicon and /usr/local on Intel, so the launchd definition must record
+  # whatever is actually present rather than assuming either.
+  local singbox_bin
   singbox_bin="$(command -v sing-box)"
 
   mkdir -p "$profiles_dir" "$(dirname "$active_link")" "$log_dir"
@@ -38,6 +28,9 @@ install_darwin() {
 
   seed_profile "$profiles_dir" wheel
 
+  # Profiles must stay editable by their owner; an install run under sudo can
+  # otherwise leave root-owned files the user can no longer edit.
+  local profile_path
   for profile_path in "$profiles_dir"/*.json; do
     [[ -e "$profile_path" ]] || continue
     if [[ "$(stat -f '%Su' "$profile_path")" == "root" ]]; then
@@ -46,11 +39,58 @@ install_darwin() {
   done
 
   ensure_managed_symlink "$active_link" "$default_profile_path"
+  install_sudoers wheel
+  install_launch_daemon "$plist_path" "$singbox_bin" "$active_link" "$log_dir"
 
-  install_sudoers "$user_name ALL=(root) NOPASSWD: /bin/ln, /bin/launchctl" wheel
+  if has_placeholders "$default_profile_path"; then
+    echo
+    echo "sbctl is installed."
+    echo "Fill in the placeholder values before starting sing-box:"
+    echo "  sbctl edit $default_profile_name"
+    return
+  fi
 
+  sing-box check -c "$default_profile_path"
+  start_launch_daemon "$plist_path"
+  echo "sbctl is installed and sing-box is running."
+}
+
+ensure_singbox_darwin() {
+  if command -v sing-box >/dev/null 2>&1; then
+    return
+  fi
+
+  local brew_bin=""
+  if command -v brew >/dev/null 2>&1; then
+    brew_bin="$(command -v brew)"
+  elif [[ -x /opt/homebrew/bin/brew ]]; then
+    brew_bin="/opt/homebrew/bin/brew"
+  elif [[ -x /usr/local/bin/brew ]]; then
+    brew_bin="/usr/local/bin/brew"
+  fi
+
+  if [[ -z "$brew_bin" ]]; then
+    echo "sing-box is not installed and Homebrew was not found." >&2
+    echo "Install Homebrew or sing-box, then run 'make install' again." >&2
+    exit 1
+  fi
+
+  # Homebrew refuses to run as root, so drop back to the invoking user.
+  sudo -u "$user_name" "$brew_bin" install sing-box
+
+  # brew may install outside the current PATH; make the new binary findable.
+  local brew_prefix
+  brew_prefix="$(sudo -u "$user_name" "$brew_bin" --prefix)"
+  export PATH="$brew_prefix/bin:$PATH"
+}
+
+install_launch_daemon() {
+  local plist_path="$1" singbox_bin="$2" active_link="$3" log_dir="$4"
+  local tmp_plist
   tmp_plist="$(mktemp)"
-  trap 'rm -f "$tmp_plist"' EXIT RETURN
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp_plist'" RETURN
+
   cat > "$tmp_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -63,39 +103,36 @@ install_darwin() {
     <string>$singbox_bin</string>
     <string>run</string>
     <string>-c</string>
-    <string>/usr/local/etc/sing-box/config.json</string>
+    <string>$active_link</string>
   </array>
   <key>KeepAlive</key>
   <true/>
   <key>RunAtLoad</key>
   <false/>
   <key>StandardErrorPath</key>
-  <string>/var/log/sing-box/error.log</string>
+  <string>$log_dir/error.log</string>
   <key>StandardOutPath</key>
-  <string>/var/log/sing-box/access.log</string>
+  <string>$log_dir/access.log</string>
 </dict>
 </plist>
 EOF
 
-  install -o root -g wheel -m 644 "$tmp_plist" "$plist_path"
-  if ! plutil -lint "$plist_path"; then
-    echo "plist validation failed; aborting" >&2
+  if ! plutil -lint "$tmp_plist" >/dev/null; then
+    echo "generated launchd definition is invalid; aborting without changing $plist_path" >&2
     exit 1
   fi
+  install -o root -g wheel -m 644 "$tmp_plist" "$plist_path"
+}
 
-  if has_placeholders "$default_profile_path"; then
-    echo "installed sbctl system files; edit $default_profile_path before starting sing-box"
-    return
-  fi
+start_launch_daemon() {
+  local plist_path="$1"
+  local label="system/app.lexiflix.singbox"
 
-  sing-box check -c "$default_profile_path"
-  if launchctl print system/app.lexiflix.singbox >/dev/null 2>&1; then
-    if ! launchctl kickstart -k system/app.lexiflix.singbox; then
-      launchctl bootout system/app.lexiflix.singbox || true
-      launchctl bootstrap system "$plist_path"
+  if launchctl print "$label" >/dev/null 2>&1; then
+    if launchctl kickstart -k "$label"; then
+      return
     fi
-  else
-    launchctl bootstrap system "$plist_path"
+    launchctl bootout "$label" || true
   fi
-  echo "installed sbctl system files"
+  launchctl bootstrap system "$plist_path"
 }

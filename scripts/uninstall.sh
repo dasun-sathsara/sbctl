@@ -1,40 +1,52 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Profiles and logs are deliberately preserved: an uninstall should remove sbctl,
+# not destroy the user's configurations or their operational history. The paths
+# to delete manually are printed at the end.
+
+remove_darwin() {
+  local label="system/app.lexiflix.singbox"
+  local plist_path="/Library/LaunchDaemons/app.lexiflix.singbox.plist"
+
+  if launchctl print "$label" >/dev/null 2>&1; then
+    launchctl bootout "$label" || true
+  fi
+  rm -f "$plist_path"
+  rm -f /etc/sudoers.d/sbctl
+  rm -f /usr/local/etc/sing-box/config.json
+
+  echo "removed the launchd definition, sudo rules and active configuration"
+  echo "profiles kept in /usr/local/etc/sing-box/profiles"
+  echo "logs kept in /var/log/sing-box"
+}
+
+remove_linux() {
+  systemctl stop sing-box || true
+  systemctl disable sing-box || true
+  rm -f /etc/systemd/system/sing-box.service.d/10-sbctl.conf
+  rmdir /etc/systemd/system/sing-box.service.d 2>/dev/null || true
+  systemctl daemon-reload || true
+
+  rm -f /etc/sudoers.d/sbctl
+  rm -f /etc/sing-box/config.json
+
+  echo "removed the systemd drop-in, sudo rules and active configuration"
+  echo "profiles kept in /etc/sing-box/profiles"
+}
+
 case "$(uname -s)" in
-  Darwin)
-    plist_path="/Library/LaunchDaemons/app.lexiflix.singbox.plist"
-    sudoers_path="/etc/sudoers.d/sbctl"
-    active_link="/usr/local/etc/sing-box/config.json"
-
-    if launchctl print system/app.lexiflix.singbox >/dev/null 2>&1; then
-      launchctl bootout system/app.lexiflix.singbox || true
-    fi
-
-    rm -f "$plist_path" "$sudoers_path" "$active_link"
-    echo "removed sbctl macOS system files"
-    ;;
-  Linux)
-    if [[ -r /etc/os-release ]]; then
-      # shellcheck disable=SC1091
-      source /etc/os-release
-    fi
-    if [[ "${ID:-}" != "debian" && "${ID_LIKE:-}" != *"debian"* ]]; then
-      echo "unsupported Linux distribution: ID=${ID:-} ID_LIKE=${ID_LIKE:-}" >&2
-      exit 1
-    fi
-    systemctl stop sing-box || true
-    rm -f /etc/sudoers.d/sbctl /etc/sing-box/config.json
-    echo "removed sbctl Debian-family system files"
-    ;;
+  Darwin) remove_darwin ;;
+  Linux)  remove_linux ;;
   *)
     echo "unsupported platform: $(uname -s)" >&2
     exit 1
     ;;
 esac
 
-# Deliberately preserve profiles so uninstall does not destroy user-managed configs.
-# Remove the platform profile directory manually only if you want a full reset.
-#
-# Deliberately preserve logs so uninstall does not wipe operational history.
-# Remove the platform log directory manually if you want a full cleanup.
+# Remove the binary here as well as in the Makefile, so running this script
+# directly leaves the same state as `make uninstall`.
+if [[ -e /usr/local/bin/sbctl ]]; then
+  rm -f /usr/local/bin/sbctl
+  echo "removed /usr/local/bin/sbctl"
+fi

@@ -1,0 +1,8 @@
+╭────────────────────────────────╮
+│  sbctl                         │
+│  state    ● running            │
+│  profile  work                 │
+│  server   vpn.example.com:443  │
+│  tun      tun0                 │
+│  pid      4711                 │
+╰────────────────────────────────╯

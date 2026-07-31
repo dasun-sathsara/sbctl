@@ -1,0 +1,4 @@
+✓ sing-box        version 1.13.8
+✗ sudo: activate  not permitted without a password
+  → reinstall the rules with: sudo make install
+⚠ active config   no profile selected
