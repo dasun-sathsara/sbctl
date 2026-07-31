@@ -54,11 +54,11 @@ of what remains unfixed.
 
 ## Platform support
 
-| Platform | Service | Active config | Logs |
-|---|---|---|---|
-| macOS | launchd system daemon (`app.lexiflix.singbox`) | symlink at `/usr/local/etc/sing-box/config.json` | `/var/log/sing-box/error.log` |
-| Debian-family Linux | systemd unit (`sing-box`) | symlink at `/etc/sing-box/config.json` | journald |
-| Windows | WinSW service (`sing-box`) | copy at `%ProgramData%\sing-box\config.json` | `%ProgramData%\sing-box\logs` |
+| Platform            | Service                                        | Active config                                    | Logs                          |
+| ------------------- | ---------------------------------------------- | ------------------------------------------------ | ----------------------------- |
+| macOS               | launchd system daemon (`app.lexiflix.singbox`) | symlink at `/usr/local/etc/sing-box/config.json` | `/var/log/sing-box/error.log` |
+| Debian-family Linux | systemd unit (`sing-box`)                      | symlink at `/etc/sing-box/config.json`           | journald                      |
+| Windows             | WinSW service (`sing-box`)                     | copy at `%ProgramData%\sing-box\config.json`     | `%ProgramData%\sing-box\logs` |
 
 ## Install
 
@@ -146,13 +146,13 @@ sbctl completion zsh      # shell completions
 
 ### Global flags
 
-| Flag | Effect |
-|---|---|
-| `--json` | machine-readable output; every payload carries `"schema": 1` |
-| `--plain` | ASCII symbols, no borders or colour — the stable text interface |
-| `--no-color` | disable colour, keep Unicode (`NO_COLOR` is also honoured) |
-| `-q, --quiet` | suppress informational output; errors still print |
-| `-v, --verbose` | print the commands, paths and timings sbctl uses |
+| Flag            | Effect                                                          |
+| --------------- | --------------------------------------------------------------- |
+| `--json`        | machine-readable output; every payload carries `"schema": 1`    |
+| `--plain`       | ASCII symbols, no borders or colour — the stable text interface |
+| `--no-color`    | disable colour, keep Unicode (`NO_COLOR` is also honoured)      |
+| `-q, --quiet`   | suppress informational output; errors still print               |
+| `-v, --verbose` | print the commands, paths and timings sbctl uses                |
 
 `--json` takes precedence over `--plain` and `--no-color` when combined, since
 JSON carries no decoration to degrade.
@@ -165,13 +165,13 @@ piped: the same command produces the same bytes regardless of destination, so
 
 ### Exit codes
 
-| Code | Meaning |
-|---|---|
-| 0 | success — including cancelling an interactive prompt |
-| 1 | general error: bad usage, unknown profile, I/O, network |
-| 2 | validation: placeholders remain, or sing-box rejected the config |
-| 3 | service: it would not start or stop, or it failed the post-activation check |
-| 4 | permission: sudo rules missing, or elevation declined |
+| Code | Meaning                                                                     |
+| ---- | --------------------------------------------------------------------------- |
+| 0    | success — including cancelling an interactive prompt                        |
+| 1    | general error: bad usage, unknown profile, I/O, network                     |
+| 2    | validation: placeholders remain, or sing-box rejected the config            |
+| 3    | service: it would not start or stop, or it failed the post-activation check |
+| 4    | permission: sudo rules missing, or elevation declined                       |
 
 ## Profile template
 
