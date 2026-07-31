@@ -25,9 +25,10 @@
     {
       "type": "tun",
       "tag": "tun-in",
-      "interface_name": "utun123",
+      "interface_name": "",
       "address": [
-        "172.19.0.1/30"
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
       ],
       "auto_route": true,
       "strict_route": true,
@@ -69,6 +70,10 @@
       "strategy": "ipv4_only"
     },
     "rules": [
+      {
+        "ip_version": 6,
+        "action": "reject"
+      },
       {
         "port": 53,
         "action": "hijack-dns"
