@@ -97,6 +97,12 @@ what this build issues — and `sbctl doctor` reports any mismatch.
 - A systemd drop-in when the packaged unit does not read the managed config,
   which otherwise made profile switches appear to work while doing nothing.
 - `SECURITY.md` and `docs/manual-verification.md`.
+- `sbctl pull <name> <url>` — download a profile from a subscription or raw-file
+  URL, validated with sing-box before it is kept, with the source recorded for
+  later refreshes. Downloads are capped at 8 MiB and restricted to http(s).
+- `sbctl sync [name]` — re-fetch remotely-pulled profiles; the profile in
+  service goes through the verified activation path, so a broken remote update
+  rolls back. `sbctl rm` also drops the recorded source.
 
 ### Changed
 

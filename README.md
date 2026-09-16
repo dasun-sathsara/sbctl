@@ -109,6 +109,9 @@ sbctl off                 # stop sing-box
 sbctl status              # current state
 sbctl logs                # follow service output
 sbctl add work            # create from the template and edit
+sbctl pull work <url>   # download a profile from a URL (subscription, gist)
+sbctl sync                # re-fetch every remotely-pulled profile
+sbctl sync work           # re-fetch one profile, reloading it if in service
 sbctl edit work           # edit, validate, reload if it is in service
 sbctl rm work             # delete, with confirmation
 sbctl check               # validate the active profile
@@ -136,6 +139,15 @@ sbctl completion zsh      # shell completions
   it. Discarding restores the file's original permissions.
 - `sbctl add <name>` creates from the template, then behaves like `edit`.
   Discarding removes the new file rather than leaving a broken profile behind.
+- `sbctl pull <name> <url>` downloads a sing-box configuration (a subscription
+  link, a raw file such as a GitHub Gist) and saves it as a profile after
+  validating it with sing-box. The source URL is recorded, downloads are
+  capped at 8 MiB, and only http(s) URLs are accepted.
+- `sbctl sync [name]` re-fetches remotely-pulled profiles. With no name every
+  recorded source is refreshed; inactive profiles are replaced in place, while
+  the profile in service goes last through the same verified activation as
+  `use`, so a broken remote update rolls back instead of taking the network
+  down. Content that fails validation never touches the stored profile.
 - `sbctl rm <name>` deletes after confirmation. Deleting the profile in service
   requires `--force`, which stops sing-box first so it is never left reading a
   file that no longer exists.

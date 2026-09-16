@@ -77,6 +77,8 @@ func (a *App) rootCmd() *cobra.Command {
 		a.listCmd(),
 		a.useCmd(),
 		a.addCmd(),
+		a.pullCmd(),
+		a.syncCmd(),
 		a.editCmd(),
 		a.rmCmd(),
 		a.offCmd(),

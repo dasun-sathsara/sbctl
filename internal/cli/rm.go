@@ -108,6 +108,11 @@ func (a *App) rmAction(ctx context.Context, name string, force bool) error {
 	if err := os.Remove(profile.PathFor(a.Layout.ProfilesDir, name)); err != nil {
 		return a.storeError(err, "delete")
 	}
+	// A remotely-fetched profile leaves its source URL behind; drop that too
+	// so a later `sbctl sync` does not try to refresh a deleted profile.
+	if err := profile.RemoveSource(a.Layout.ProfilesDir, name); err != nil {
+		return a.storeError(err, "delete")
+	}
 	a.success("deleted %s", name)
 
 	if isActive {
